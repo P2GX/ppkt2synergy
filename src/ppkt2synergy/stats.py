@@ -4,14 +4,14 @@ import phenopackets as ppkt
 #from sklearn.metrics import matthews_corrcoef
 
 def get_status_for_terms(
-        patient: ppkt.Phenopacket, 
+        phenopkt: ppkt.Phenopacket, 
         hpo_id_A: str, 
         hpo_id_B: str) -> Union[tuple, None]:
     """
     Checks the statuses (observed or excluded) of two HPO term IDs in a patient's phenotype data.
 
     Args:
-        phenotype: A PhenotypicFeature object containing the patient's phenotype data.
+        phenopkt: A phenopacket representing one individual and all of their PhenotypicFeatures.
         hpo_id_A: The first HPO term ID to check.
         hpo_id_B: The second HPO term ID to check.
 
@@ -23,7 +23,7 @@ def get_status_for_terms(
     """
     status_A = status_B = None
 
-    for phenotype_feature in patient.phenotypic_features:
+    for phenotype_feature in phenopkt.phenotypic_features:
         if phenotype_feature.type.id == hpo_id_A:
             status_A = 0 if phenotype_feature.excluded else 1
         elif phenotype_feature.type.id == hpo_id_B:
