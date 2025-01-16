@@ -10,13 +10,19 @@ class CohortManager:
 
 
     @staticmethod
-    def from_ppkt_store(cohort_name: str, ppkt_store_version: str) -> typing.List[ppkt.Phenopacket]:
+    def from_ppkt_store(
+        cohort_name: str, 
+        ppkt_store_version: str
+    ) -> typing.List[ppkt.Phenopacket]:
         """
+        Retrieve Phenopacket objects for a specific cohort from a Phenopacket Store.
+
         Args:
             cohort_name (str): The name of a cohort in Phenopacket Store
-            ppkt_store_version (str): Version of Phenopacket Store
+            ppkt_store_version (str): Version of Phenopacket Store to use
+
         Returns:
-            a list of GA4GH Phenopacket objects
+            a list of GA4GH Phenopacket objects for the cohort
         """
         registry = configure_phenopacket_registry()
         with registry.open_phenopacket_store(release=ppkt_store_version) as ps:
