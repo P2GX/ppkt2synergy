@@ -1,5 +1,5 @@
 from .cohort import CohortManager
-from .stats import get_status_for_terms
+from .stats import CohortStats
 
 
 __version__ = "0.0.1"
@@ -7,5 +7,5 @@ __version__ = "0.0.1"
 
 __all__ = [
     "CohortManager",
-    "get_status_for_terms"
+    "CohortStats"
 ]
