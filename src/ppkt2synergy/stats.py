@@ -4,6 +4,7 @@ import pandas as pd
 import hpotk
 import typing
 import scipy.stats
+import phenopackets as ppkt
 from sklearn.metrics import matthews_corrcoef
 
 class CohortStats:
@@ -16,8 +17,9 @@ class CohortStats:
 
     def __init__(
         self, 
-        cohort_name: str, 
-        ppkt_store_version: str,
+        cohort_name: str = None,  
+        ppkt_store_version: str = None,  
+        phenopackets: typing.List[ppkt.Phenopacket]=None,
         url= 'https://github.com/obophenotype/human-phenotype-ontology/releases/download/v2023-10-09/hp.json'
     ):
         """
@@ -26,13 +28,31 @@ class CohortStats:
         Args:
             cohort_name (str): The name of the patient cohort.
             ppkt_store_version (str): The version of the Phenopackets store.
+            phenopackets: Pre-provided phenopackets data (if available).
             url: The URL or path to load the HPO ontology in JSON format.
         """
         
-        self.phenopackets = CohortManager.from_ppkt_store(cohort_name,ppkt_store_version)
-        self.hpo_term_observation_matrix = self.generate_hpo_term_status_matrix()
-        self.hpo = hpotk.load_minimal_ontology(url)
+        try:
+            if phenopackets is not None:
+                # If phenopackets is provided, use it directly
+                self.phenopackets = phenopackets
+            elif cohort_name and ppkt_store_version:
+                # If phenopackets is not provided, use cohort_name and ppkt_store_version to load data
+                self.phenopackets = CohortManager.from_ppkt_store(cohort_name, ppkt_store_version)
+            else:
+                raise ValueError("Either 'phenopackets' or both 'cohort_name' and 'ppkt_store_version' must be provided.")
+            
+            self.hpo_term_observation_matrix = self.generate_hpo_term_status_matrix()
+            self.hpo = hpotk.load_minimal_ontology(url)
 
+        except ValueError as e:
+            print(f"Error occurred: {e}")
+            raise
+            
+        except Exception as e:
+            print(f"Unexpected error occurred: {e}")
+            raise
+             
 
     def generate_hpo_term_status_matrix(
         self
@@ -59,11 +79,12 @@ class CohortStats:
                 hpo_ids.add(hpo_id)
                 status_data[phenopacket.id][hpo_id] = 0 if feature.excluded else 1
 
-        # Create a sorted list of unique HPO IDs
-        hpo_ids = sorted(hpo_ids)
-
         # Convert the status_data dictionary to a DataFrame
-        status_matrix = pd.DataFrame.from_dict(status_data, orient='index', columns=hpo_ids)
+        status_matrix = pd.DataFrame.from_dict(status_data, orient='index', columns=sorted(hpo_ids))
+
+        # Check if the matrix is empty
+        if status_matrix.empty:
+            raise ValueError("The generated HPO term status matrix is empty.")
 
         return status_matrix
     
@@ -87,12 +108,21 @@ class CohortStats:
                 - Rows with NaN values are dropped.
         """
 
+        # Ensure that the HPO terms are not the same
+        if hpo_id_A == hpo_id_B:
+            raise ValueError(f"The two HPO terms must be different. Both terms are the same: {hpo_id_A}")
+
         # Check if the HPO terms exist in the matrix
         if hpo_id_A not in self.hpo_term_observation_matrix.columns or hpo_id_B not in self.hpo_term_observation_matrix.columns:
             raise ValueError(f"One or both of the HPO terms {hpo_id_A}, {hpo_id_B} are not present in the cohort.")
 
         filtered_matrix = self.hpo_term_observation_matrix[[hpo_id_A, hpo_id_B]]
         filtered_matrix_cleaned = filtered_matrix.dropna()
+
+        # Check if the number of rows is less than 5
+        if filtered_matrix_cleaned.shape[0] < 5:
+            raise ValueError("Not enough valid data (less than 5 rows) to perform the analysis.")
+        
         return filtered_matrix_cleaned
 
         
@@ -112,16 +142,17 @@ class CohortStats:
             A list of unrelated HPO terms. If the HPO ID is not found in the filtered 
                           DataFrame, an error message is returned.
         """
-
-        # Check if the term exists in the terms_status
-        if hpo_id not in self.hpo_term_observation_matrix.columns:
-            raise ValueError(f"The HPO term '{hpo_id}' is not found in this cohort.")
     
         # Filter out columns with more than 50% missing data
-        filtered_matrix = self.hpo_term_observation_matrix.loc[:, self.hpo_term_observation_matrix.isna().mean() <= 0.5]
+        filtered_matrix = self.hpo_term_observation_matrix.loc[:, self.hpo_term_observation_matrix.isna().mean() < 0.5]
 
+        # Check if the filtered matrix is empty
+        if filtered_matrix.empty:
+            raise ValueError("The filtered matrix is empty after applying the 50% missing data filter.")
+        
+        # Check if the term exists in the filtered_matrix
         if hpo_id not in filtered_matrix.columns:
-            raise ValueError(f"error: The HPO term '{hpo_id}' was excluded due to missing data.")
+            raise ValueError(f"The HPO term '{hpo_id}' is not found in this cohort or was excluded due to missing data.")
 
         # Get ancestors and descendants of the term
         ancestors = self.hpo.graph.get_ancestors(hpo_id)
@@ -130,6 +161,10 @@ class CohortStats:
         # Get unrelated terms
         related_terms = set(ancestors) | set(descendants) | {hpo_id}
         unrelated_terms = [col for col in filtered_matrix.columns if col not in related_terms]
+
+        if not unrelated_terms:
+            raise ValueError(f"No valid unrelated terms found for the given HPO term '{hpo_id}'.")
+
 
         return unrelated_terms
     
@@ -151,19 +186,18 @@ class CohortStats:
         """
 
         results = {}
+        # Construct the 2x2 contingency table
+        n_11 = np.sum((observed_status_A == 1) & (observed_status_B == 1))
+        n_10 = np.sum((observed_status_A == 1) & (observed_status_B == 0))
+        n_01 = np.sum((observed_status_A == 0) & (observed_status_B == 1))
+        n_00 = np.sum((observed_status_A == 0) & (observed_status_B == 0))
+        contingency_table = np.array([[n_11, n_10], [n_01, n_00]])   
         
         if len(observed_status_A) > 30:
             # Calculate Spearman correlation
             spearman_corr, spearman_p = scipy.stats.spearmanr(observed_status_A, observed_status_B)
             results["Spearman"] = spearman_corr
             results["Spearman_p_value"] = spearman_p
-
-            # Construct the 2x2 contingency table
-            n_11 = np.sum((observed_status_A == 1) & (observed_status_B == 1))
-            n_10 = np.sum((observed_status_A == 1) & (observed_status_B == 0))
-            n_01 = np.sum((observed_status_A == 0) & (observed_status_B == 1))
-            n_00 = np.sum((observed_status_A == 0) & (observed_status_B == 0))
-            contingency_table = np.array([[n_11, n_10], [n_01, n_00]])
 
             # Calculate MCC
             mcc = matthews_corrcoef(observed_status_A, observed_status_B)
@@ -177,7 +211,7 @@ class CohortStats:
             results["Fisher_Exact_p-value:"] = p_value
 
         else:
-            results["Error"] = "Sample size is too small."
+            raise ValueError("Not enough valid data (less than 5 rows) to perform the analysis.")
 
         return results
 
@@ -207,11 +241,12 @@ class CohortStats:
             
             try:
                 observed_status = self.filter_hpo_terms_and_dropna(hpo_id_A, hpo_id_B)
+                # Perform all statistical tests
+                stats = self.calculate_stats(observed_status[hpo_id_A], observed_status[hpo_id_B])
             except ValueError as e:
                 print(f"Error: {e}")
+                raise
 
-            # Perform all statistical tests
-            stats = self.calculate_stats(observed_status[hpo_id_A], observed_status[hpo_id_B])
             return stats
 
 

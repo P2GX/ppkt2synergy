@@ -27,4 +27,9 @@ class CohortManager:
         registry = configure_phenopacket_registry()
         with registry.open_phenopacket_store(release=ppkt_store_version) as ps:
             phenopackets = list(ps.iter_cohort_phenopackets(cohort_name))
+
+        # Check if the result is empty and raise an exception if necessary
+        if not phenopackets:
+            raise ValueError(f"No phenopackets found for cohort '{cohort_name}' in version '{ppkt_store_version}'.")
+        
         return phenopackets
