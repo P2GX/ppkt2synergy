@@ -53,8 +53,9 @@ class MutualInformationCalculator:
         """
         if not all(0 <= idx < self.feature_matrix.shape[1] for idx in feature_indices):
             raise ValueError("Feature indices must be within the valid range of the feature matrix columns")
-
+        # joint state is an array, e.g., [[0], [1], [1], [0]] This means that
         joint_state = self.feature_matrix[:, list(feature_indices)]
+        # The following command would change the above into the array ['0', '1', '1', '0']
         state_str = np.apply_along_axis(lambda x: ''.join(x.astype(str)), 1, joint_state)
         return mutual_info_score(state_str, self.target)
 

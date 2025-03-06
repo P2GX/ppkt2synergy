@@ -10,7 +10,7 @@ import networkx as nx
 import matplotlib.pyplot as plt
 
 
-# Do not test terms pairs with less than 30 individuals
+# Do not tests terms pairs with less than 30 individuals
 MIN_INDIVIDUALS_FOR_CORRELATION_TEST = 30
 
 class CohortAnalyzer:
@@ -82,9 +82,9 @@ class CohortAnalyzer:
         Returns:
             dict: A dictionary containing the following metrics:
                 - Spearman: Spearman rank correlation coefficient.
-                - Spearman_p_value: P-value for Spearman rank correlation test.
+                - Spearman_p_value: P-value for Spearman rank correlation tests.
                 - Kendall's Tau: Kendall's Tau correlation coefficient.
-                - Kendall_p_value: P-value for Kendall's Tau correlation test.
+                - Kendall_p_value: P-value for Kendall's Tau correlation tests.
         """
 
         results = {}  
@@ -143,7 +143,7 @@ class CohortAnalyzer:
             col_B: The second column to correlate.
 
         Returns:
-            dict: A dictionary containing correlation coefficients and p-values for each test.
+            dict: A dictionary containing correlation coefficients and p-values for each tests.
         """
         if col_A == col_B:
             raise ValueError(f"The two columns must be different. Both columns are the same: {col_A}")

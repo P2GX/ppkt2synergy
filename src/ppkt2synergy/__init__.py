@@ -8,7 +8,7 @@ from .synergy_tree import PartitionGenerator
 from .synergy_tree import TreeNode,LeafNode,InternalNode
 
 
-__version__ = "0.0.1"
+__version__ = "0.0.2"
 
 
 __all__ = [
