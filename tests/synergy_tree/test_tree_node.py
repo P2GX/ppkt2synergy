@@ -23,8 +23,8 @@ class TestTreeNode:
         """Test properties of LeafNode."""
 
         node = LeafNode(features, mi, label)
-        assert node.features == expected_features
-        assert node.mi == expected_mi
+        assert node.get_feature_indices == expected_features
+        assert node.get_mi == expected_mi
         assert node.is_leaf() is expected_is_leaf
 
 
@@ -44,10 +44,10 @@ class TestTreeNode:
         child_nodes = [feature_to_leaf[child] for child in children]
         node = InternalNode(features, mi, synergy, child_nodes)
 
-        assert node.features == expected_features
-        assert node.mi == expected_mi
+        assert node.get_feature_indices == expected_features
+        assert node.get_mi == expected_mi
         assert node.synergy == expected_synergy
         assert node.is_leaf() is expected_is_leaf
-        children_features = [child.features for child in node.children]
+        children_features = [child.get_feature_indices for child in node.children]
         assert children_features == expected_children_features
 
