@@ -9,13 +9,13 @@ class TreeNode(metaclass=ABCMeta):
 
     @property
     @abstractmethod
-    def features(self) -> Tuple[int]:
+    def get_feature_indices(self) -> Tuple[int]:
         """Returns the feature indices associated with the node."""
         pass
 
     @property
     @abstractmethod
-    def mi(self) -> float:
+    def get_mi(self) -> float:
         """Returns the mutual information score for this node."""
         pass
 
@@ -28,20 +28,20 @@ class LeafNode(TreeNode):
     """
     Represents a leaf node in the tree.
     """
-    def __init__(self, features: Tuple[int], mi: float, label: str):
+    def __init__(self, feature_indices: Tuple[int], mi: float, label: str):
         """
         Initializes the leaf node with features, MI score, and label.
         """
-        self._features = features
+        self._feature_indices = feature_indices
         self._mi = mi
         self.label = label
 
     @property
-    def features(self) -> Tuple[int]:
-        return self._features
+    def get_feature_indices(self) -> Tuple[int]:
+        return self._feature_indices
 
     @property
-    def mi(self) -> float:
+    def get_mi(self) -> float:
         return self._mi
 
     def is_leaf(self) -> bool:
@@ -51,22 +51,30 @@ class InternalNode(TreeNode):
     """
     Represents an internal node in the tree.
     """
-    def __init__(self, features: Tuple[int], mi: float, synergy: float, children: List[TreeNode]):
+    def __init__(self, feature_indices: Tuple[int], mi: float, synergy: float, children: List[TreeNode]):
         """
         Initializes the internal node with features, MI score, synergy score, and children.
         """
-        self._features = features
+        self._feature_indices = feature_indices
         self._mi = mi
         self.synergy = synergy
         self.children = children
 
     @property
-    def features(self) -> Tuple[int]:
-        return self._features
+    def get_feature_indices(self) -> Tuple[int]:
+        return self._feature_indices
 
     @property
-    def mi(self) -> float:
+    def get_mi(self) -> float:
         return self._mi
+    
+    @property
+    def get_synergy(self) -> float:
+        return self.synergy
+        
+    @property
+    def get_children(self) -> List[TreeNode]:
+        return self.children
 
     def is_leaf(self) -> bool:
         return False
