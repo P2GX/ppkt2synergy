@@ -1,166 +1,220 @@
 import pandas as pd
 import phenopackets as ppkt
-from typing import List, Union, IO,Tuple
+from typing import List, Union, IO, Tuple, Callable, Optional
 from .hpo_utils import load_hpo
 
 class CohortMatrixGenerator:
     """
-    Generates data matrices (HPO terms, diseases) from phenopacket data.
+    Converts phenopacket data into structured matrices for analysis.
 
-     Example:
-        ```python
-        from ppkt2synergy import CohortDataLoader
-        from ppkt2synergy import CohortMatrixGenerator
-        dataloader = CohortDataLoader.from_ppkt_store('FBN1')
-        matrix_generator = CohortMatrixGenerator(dataloader)
-        ```
+    This class generates:
+    1. HPO Term Status Matrix: Indicates whether a patient has certain HPO terms.
+    2. Disease Status Matrix: Indicates whether a patient has been diagnosed with specific diseases.
+
+    Example:
+        from ppkt2synergy import CohortDataLoader, CohortMatrixGenerator
+        # Load phenopackets and create matrix generator
+        >>> phenopackets = CohortDataLoader.from_ppkt_store('FBN1')
+        >>> matrix_gen = CohortMatrixGenerator(phenopackets)
     """
 
     def __init__(
-        self, 
-        phenopackets: List[ppkt.Phenopacket], 
-        hpo_file: Union[IO, str] = None):
+            self, 
+            phenopackets: List[ppkt.Phenopacket], 
+            hpo_file: Union[IO, str] = None,
+            external_target_matrix: Optional[pd.DataFrame] = None):
         """
-        Initialize the CohortMatrixGenerator class with phenopacket data.
+        Initializes the CohortMatrixGenerator.
 
         Args:
-            phenopackets: List of Phenopacket instances.
-            hpo_file: Path to HPO file (optional, loads latest if None).
+            phenopackets (List[Phenopacket]): List of phenopacket instances.
+            hpo_file (str or IO, optional): Path to an HPO ontology file. Loads the latest version if not provided.
 
         Raises:
-            ValueError: If phenopackets is empty or HPO loading fails.
-            TypeError: If phenopackets contains invalid objects.
+            ValueError: If the phenopackets list is empty.
+            ValueError: If the HPO file fails to load.
         """
-
         if not phenopackets:
             raise ValueError("Phenopackets list cannot be empty.")
-        if not all(isinstance(p, ppkt.Phenopacket) for p in phenopackets):
-            raise TypeError("All elements in phenopackets must be Phenopacket instances.")
-        
+
         self.phenopackets = phenopackets
 
         try:
             self.hpo = load_hpo(hpo_file)
-        except Exception as e:
-            raise ValueError(f"Error loading HPO file: {e}")
-
+        except (IOError, KeyError) as e:
+            raise ValueError(f"Failed to load HPO file: {e}")
         self.hpo_term_observation_matrix, self.hpo_labels = self.generate_hpo_term_status_matrix()
-        self.disease_matrix, self.disease_labels = self.generate_disease_status_matrix()
-
+        if external_target_matrix is not None:
+            # Align rows to phenopacket IDs
+            ppkt_ids = [ppkt.id for ppkt in self.phenopackets]
+            self.target_matrix = external_target_matrix.reindex(ppkt_ids)
+            self.target_labels = {
+                col: col for col in self.target_matrix.columns} 
+        else:
+            self.target_matrix, self.target_labels = self.generate_target_status_matrix()
 
     def generate_hpo_term_status_matrix(
-        self,
-        use_labels: bool = False
-    ) -> Tuple[pd.DataFrame, dict]:
+            self, 
+            use_labels: bool = False,
+            propagate_hierarchy: bool = True,
+            ) -> Tuple[pd.DataFrame, dict]:
         """
-        Generates a binary matrix for HPO term presence/absence.
-        
-        - Rows: Patient IDs
-        - Columns: Unique HPO terms
+        Creates a binary matrix indicating the presence/absence of HPO terms for each patient.
+
+        Matrix structure:
+        - Rows: Individual patient IDs.
+        - Columns: Unique HPO terms (e.g., HP:0004322 = "Seizures").
         - Values:
-            - 1 = Observed
-            - 0 = Excluded
-            - NaN = No data
+            - 1 → Term is observed in the patient.
+            - 0 → Term is explicitly excluded for the patient.
+            - NaN → No information available.
+
+        Example output (before propagation):
+                     HP:0004322  HP:0001250  HP:0012759
+        Patient_1         1         NaN         0
+        Patient_2         NaN        1          NaN
+     
         
         Propagation rules:
-            - Observed (1) propagates to ancestors.
-            - Excluded (0) propagates to descendants.
-        
+        - Observed terms (1) propagate to their ancestors.
+        - Excluded terms (0) propagate to their descendants.
+
+        Args:
+            use_labels (bool): If True, replaces HPO term IDs with their human-readable labels.
+            propagate_hierarchy (bool): If True, applies hierarchical propagation (only for HPO terms).
+
         Returns:
-            A pandas DataFrame representing the HPO term status matrix.
-            A dictionary mapping HPO IDs to their labels.
+            Tuple:
+                - pd.DataFrame: The HPO term status matrix.
+                - dict: A mapping of HPO term IDs to their labels.
         """
-        hpo_ids = set()
-        status_data = {}
-        hpo_labels = {}
+        return self._generate_status_matrix(
+            feature_extractor=lambda ppkt: [
+                (f.type.id, f.type.label, 0 if f.excluded else 1) for f in ppkt.phenotypic_features
+            ],
+            propagate_hierarchy=propagate_hierarchy,
+            use_labels=use_labels
+        )
+
+    def generate_target_status_matrix(
+            self, 
+            use_labels: bool = False
+            ) -> Tuple[pd.DataFrame, dict]:
+        """
+        Creates a binary matrix indicating the presence/absence of diagnosed diseases.
+
+        Matrix structure:
+        - Rows: Individual patient IDs.
+        - Columns: Unique disease IDs (e.g., OMIM:101600 = "Marfan Syndrome").
+        - Values:
+            - 1 → Patient is diagnosed with this disease.
+            - 0 → No diagnosis (default).
         
-        # Populate status data by iterating through the phenopackets
+        Example output:
+                     OMIM:101600  OMIM:603903
+        Patient_1         1            0
+        Patient_2         0            1
+
+        Args:
+            use_labels (bool): If True, replaces disease IDs with their human-readable labels.
+
+        Returns:
+            Tuple:
+                - pd.DataFrame: The disease status matrix.
+                - dict: A mapping of disease IDs to their labels.
+        """
+        return self._generate_status_matrix(
+            feature_extractor=lambda ppkt: [
+                (d.disease.id, d.disease.label, 1) 
+                for interp in (ppkt.interpretations or []) 
+                if interp.diagnosis and interp.diagnosis.disease
+                for d in [interp.diagnosis]
+            ],
+            propagate_hierarchy=False,
+            use_labels=use_labels
+        )
+
+    def _generate_status_matrix(
+        self, 
+        feature_extractor: Callable, 
+        propagate_hierarchy: bool, 
+        use_labels: bool
+    ) -> Tuple[pd.DataFrame, dict]:
+        """
+        General method to construct status matrices for either HPO terms or diseases.
+
+        Args:
+            feature_extractor (Callable): Function to extract features (HPO terms or diseases) from a phenopacket.
+            propagate_hierarchy (bool): If True, applies hierarchical propagation (only for HPO terms).
+            use_labels (bool): If True, replaces term/disease IDs with their human-readable labels.
+
+        Returns:
+            - pd.DataFrame: The resulting binary matrix.
+            - dict: A mapping of feature IDs to their labels.
+        """
+        feature_ids, feature_labels, status_data = set(), {}, {}
+
         for phenopacket in self.phenopackets:
             status_data[phenopacket.id] = {}
-            for feature in phenopacket.phenotypic_features:
-                hpo_id = feature.type.id
-                hpo_label = feature.type.label
-                hpo_ids.add(hpo_id)
-                hpo_labels[hpo_id] = hpo_label
-                status_data[phenopacket.id][hpo_id] = 0 if feature.excluded else 1
+            for f_id, f_label, value in feature_extractor(phenopacket):
+                feature_ids.add(f_id)
+                feature_labels[f_id] = f_label
+                status_data[phenopacket.id][f_id] = value
 
-        # Convert the status_data dictionary to a DataFrame
-        status_matrix = pd.DataFrame.from_dict(status_data, orient='index', columns=sorted(hpo_ids))
-        hpo_matrix = self._propagate_hpo_hierarchy(status_matrix)
-        if use_labels:
-            status_matrix = status_matrix.rename(columns=hpo_labels)
+        matrix = pd.DataFrame.from_dict(status_data, orient='index', columns=sorted(feature_ids))
         
-        return hpo_matrix, hpo_labels
-    
+        if propagate_hierarchy:
+            matrix = self._propagate_hpo_hierarchy(matrix)
+        
+        if use_labels:
+            matrix = matrix.rename(columns=feature_labels)
+
+        return matrix, feature_labels
+
     def _propagate_hpo_hierarchy(
             self, 
             matrix: pd.DataFrame
             ) -> pd.DataFrame:
         """
         Propagates HPO term statuses using ontology hierarchy.
-        
-        - Observed (1) propagates to ancestors.
-        - Excluded (0) propagates to descendants.
-        """
 
+        Propagation rules:
+        - Observed terms (1) propagate to their ancestors.
+        - Excluded terms (0) propagate to their descendants.
+
+        Example:
+        HP:0012759 (Neurological abnormality)
+        ├── HP:0001250 (Seizures)
+        │   ├── HP:0004322 (Focal seizures)
+        Before propagation:
+                     HP:0004322  HP:0001250  HP:0012759
+        Patient_1         1         NaN         NaN
+        Patient_2         NaN        0          NaN
+
+        After propagation:
+                     HP:0004322  HP:0001250  HP:0012759
+        Patient_1         1         1         1   # 1 propagates to ancestors
+        Patient_2         0         0         NaN   # 0 propagates to descendants
+
+
+        Args:
+            matrix (pd.DataFrame): The initial HPO status matrix.
+
+        Returns:
+            `pd.DataFrame`: The matrix after propagation.
+        """
         for hpo_id in matrix.columns:
             ancestors = {term.value for term in self.hpo.graph.get_ancestors(hpo_id)}
             descendants = {term.value for term in self.hpo.graph.get_descendants(hpo_id)}
-            
-            # Propagate observed (1) to ancestors
+
             valid_ancestors = ancestors & set(matrix.columns)
+            valid_descendants = descendants & set(matrix.columns)
+
             if valid_ancestors:
                 mask = matrix[hpo_id] == 1
-                matrix.loc[mask, list(valid_ancestors)] = matrix.loc[mask, list(valid_ancestors)].fillna(1)
-            
-            # Propagate excluded (0) to descendants
-            valid_descendants = descendants & set(matrix.columns)
+                matrix.loc[mask, list(valid_ancestors)] = 1  
+
             if valid_descendants:
                 mask = matrix[hpo_id] == 0
-                matrix.loc[mask, list(valid_descendants)] = matrix.loc[mask, list(valid_descendants)].fillna(0)
-        
+                matrix.loc[mask, list(valid_descendants)] = 0  
         return matrix
-
-    def generate_disease_status_matrix(
-            self,
-            use_labels: bool = False
-            ) -> Tuple[pd.DataFrame, dict]:
-        """
-        Generates a binary matrix for disease presence/absence.
-        
-        - Rows: Patient IDs
-        - Columns: Unique disease IDs
-        - Values:
-            - 1 = Diagnosed
-            - 0 = Not diagnosed (default)
-        
-        Returns:
-            A pandas DataFrame representing the disease status matrix.
-            A dictionary mapping disease IDs to their labels.
-        """
-        disease_ids = set()
-        status_data = {}
-        disease_labels = {}
-
-        # Populate status data by iterating through the phenopackets
-        for phenopacket in self.phenopackets:
-            status_data[phenopacket.id] = {}
-            if phenopacket.interpretations is not None and len(phenopacket.interpretations) > 0:
-                for interpretation in phenopacket.interpretations:
-                    diagnosis = interpretation.diagnosis
-                    if diagnosis is not None and diagnosis.disease is not None:
-                        disease_id = diagnosis.disease.id
-                        disease_label = diagnosis.disease.label
-                        disease_ids.add(disease_id)
-                        disease_labels[disease_id] = disease_label
-                        status_data[phenopacket.id][disease_id] = 1  # Diagnosed with the disease
-
-        # Convert the status_data dictionary to a DataFrame
-        disease_matrix = pd.DataFrame.from_dict(status_data, orient='index', columns=sorted(disease_ids))
-        if use_labels:
-            disease_matrix = disease_matrix.rename(columns= disease_labels)
-        
-        # Fill NaN values with 0 (no diagnosis = no disease)
-        disease_matrix = disease_matrix.fillna(0)
-        return disease_matrix, disease_labels
-    
