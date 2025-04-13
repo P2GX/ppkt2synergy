@@ -4,11 +4,16 @@ import phenopackets as ppkt
 import pandas as pd
 from unittest.mock import patch
 from ppkt2synergy import CohortMatrixGenerator
+import pathlib
+
+TEST_DIR = pathlib.Path(__file__).parent.parent.resolve()
+HP_JSON_FILE = pathlib.Path(TEST_DIR, "data", "hp.json")
 
 # Function to load HPO data from a file
-def load_hpo_from_file(filepath="tests/data/hp.json"):
+@pytest.fixture
+def load_hpo_from_file():
     """Load HPO terms hierarchy from a JSON file."""
-    with open(filepath, "r") as file:
+    with open(HP_JSON_FILE, "r") as file:
         hpo_data = json.load(file)
     return hpo_data
 
@@ -58,11 +63,10 @@ def mock_phenopackets():
     ]
 
 @patch("ppkt2synergy.cohort_data.load_hpo")
-def test_hpo_and_disease_matrix(mock_load_hpo, mock_phenopackets):
+def test_hpo_and_disease_matrix(mock_load_hpo, mock_phenopackets,load_hpo_from_file):
     """Test the generation of the HPO term status matrix and disease status matrix with and without hierarchy propagation."""
-    # Load HPO data from the file
-    hpo_data = load_hpo_from_file("tests/data/hp.json")
-    mock_load_hpo.return_value = hpo_data  # Provide the HPO hierarchy to the generator
+
+    mock_load_hpo.return_value = load_hpo_from_file  # Provide the HPO hierarchy to the generator
     
     # Instantiate the matrix generator without passing propagate_hierarchy until calling generate_hpo_term_status_matrix
     matrix_generator = CohortMatrixGenerator(mock_phenopackets, hpo_file="tests/data/hp.json")
