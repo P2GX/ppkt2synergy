@@ -87,12 +87,29 @@ class SynergyTreeBuilder:
             raise ValueError("X and y cannot be None")
 
         # Check if X is a DataFrame and y is a Series
-        if not isinstance(X, pd.DataFrame) or not isinstance(y, pd.Series):
-            raise TypeError("Inputs must be pandas DataFrame and Series")
+        if not isinstance(X, pd.DataFrame):
+            raise TypeError("X must be pandas DataFrame")
+        
+        if isinstance(y, pd.DataFrame):
+            if y.shape[1] != 1:
+                raise ValueError("If y is a DataFrame, it must have exactly one column")
+            y = y.iloc[:, 0]  # 转为 Series
+
+        if not isinstance(y, pd.Series):
+            raise TypeError("y must be a pandas Series or a single-column DataFrame")
+        
+        if X.shape[0] != y.shape[0]:
+            raise ValueError("Number of rows in X and y must match")
 
         # Check if the number of features is at least 2
         if X.shape[1] < 2:
             raise ValueError("At least 2 features are required to build a synergy tree")
+        
+        if X.shape[0] < 20:
+            raise ValueError("At least 20 samples are required")
+        
+        if X.isnull().values.any() or y.isnull().values.any():
+            raise ValueError("X and y must not contain NaN values")
 
         # Check if max_k is valid
         if max_k is not None and max_k <= 0:

@@ -24,7 +24,8 @@ class HPOMatrixProcessor:
         threshold: float = 0.5, 
         mode: str = 'leaf',
         hpo_file: Union[IO, str] = None, 
-        use_label: bool = True
+        use_label: bool = True,
+        nan_strategy='fill',
     ) -> pd.DataFrame:
         """
         Filters the HPO term matrix by selecting features based on term hierarchy (root/leaf).
@@ -41,6 +42,10 @@ class HPOMatrixProcessor:
                 Path or URL to the HPO ontology file.
             use_label (bool, default True): 
                 Whether to replace term IDs with their labels (if available).
+            nan_strategy (str, default 'fill'):
+                Strategy for handling missing values.
+                - "fill": fill NaNs with 0
+                - "drop": drop rows with any NaNs
 
         Returns:
             Tuple[pd.DataFrame, pd.DataFrame]: 
@@ -75,9 +80,16 @@ class HPOMatrixProcessor:
         if not selected_columns:
             raise ValueError("No valid terms found. Adjust threshold or mode.")
 
-        final_matrix = hpo_matrix_filtered[selected_columns].fillna(0)
+        if nan_strategy == "fill":
+            final_matrix = hpo_matrix_filtered[selected_columns].fillna(0)
+        elif nan_strategy == "drop":
+            final_matrix = hpo_matrix_filtered[selected_columns].dropna(axis=0)
+            target_matrix = target_matrix.loc[final_matrix.index]
+        else:
+            raise ValueError(f"Invalid nan_strategy: {nan_strategy}. Use 'fill' or 'drop'.")
+        target_matrix = target_matrix.fillna(0)
 
-        # Replace term IDs with labels (if enabled)
+        # Replace term IDs with labels 
         if use_label:
             final_matrix = HPOMatrixProcessor._apply_hpo_labels(final_matrix, data_generator)
             target_matrix = HPOMatrixProcessor._apply_hpo_labels(target_matrix, data_generator)
@@ -124,7 +136,10 @@ class HPOMatrixProcessor:
         Returns:
             pd.DataFrame: Matrix with IDs replaced by labels.
         """
-        return matrix.rename(columns=data_generator.hpo_labels)
+        label_mapping = {**data_generator.hpo_labels, **data_generator.target_labels}
+        # Apply the combined mapping
+        matrix = matrix.rename(columns=label_mapping)
+        return matrix
 
 
 

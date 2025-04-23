@@ -40,7 +40,8 @@ class SynergyTreeVisualizer:
         if isinstance(node, LeafNode):
           
             leaf_id = f"{node_id}-leaf"
-            label = f"Leaf: {node.get_feature_indices}\nMI: {node.get_mi:.6f}\nLabel: {node.label}"  
+
+            label = f"Leaf: {node.get_feature_indices}\nLabel: {node.label}"  
             shape = "box"
             graph.node(leaf_id, label, shape=shape)
 
@@ -48,7 +49,7 @@ class SynergyTreeVisualizer:
                 graph.edge(parent_id, leaf_id)
         else:
 
-            label = f"Internal: {node.get_feature_indices}\nMI: {node.get_mi:.6f}\nSynergy: {node.synergy:.6f}"
+            label = f"Internal: {node.get_feature_indices}\nSynergy: {node.synergy:.6f}"
             shape = "ellipse"
             graph.node(node_id, label, shape=shape)
 
