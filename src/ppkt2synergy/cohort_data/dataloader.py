@@ -13,14 +13,14 @@ class CohortDataLoader:
 
     @staticmethod
     def from_ppkt_store(
-        cohort_name: str, 
+        cohort_name: typing.Union[str, typing.List[str]], 
         ppkt_store_version: typing.Optional[str] = None
         ) -> typing.List[ppkt.Phenopacket]:
         """
         Retrieve Phenopacket objects for a specific cohort from a Phenopacket Store.
 
         Args:
-            cohort_name (str): The name of a cohort in Phenopacket Store
+            cohort_name (Union[str, List[str]]): A cohort name or list of names
             ppkt_store_version (str):  a `str` with Phenopacket Store release tag (e.g. `0.1.23`) or `None`
             if the *latest* release should be loaded.
 
@@ -29,6 +29,12 @@ class CohortDataLoader:
         """
         registry = configure_phenopacket_registry()
         with registry.open_phenopacket_store(release=ppkt_store_version) as ps:
-            phenopackets = list(ps.iter_cohort_phenopackets(cohort_name))
-        
+            if isinstance(cohort_name, str):
+                cohort_names = [cohort_name]
+            else:
+                cohort_names = cohort_name
+
+            phenopackets = []
+            for name in cohort_names:
+                phenopackets.extend(list(ps.iter_cohort_phenopackets(name))) 
         return phenopackets
