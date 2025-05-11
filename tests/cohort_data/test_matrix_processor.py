@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import MagicMock
-from ppkt2synergy import HPOMatrixProcessor, HPOHierarchyClassifier, CohortMatrixGenerator
+from ppkt2synergy import HPOMatrixProcessor, HPOHierarchyClassifier, PhenopacketMatrixGenerator
 import pandas as pd
 
 @pytest.fixture
@@ -17,7 +17,7 @@ def mock_data_generator():
         Disease_2 (66.7%)
     - HPO labels mapped to readable names
     """
-    data_generator = MagicMock(spec=CohortMatrixGenerator)
+    data_generator = MagicMock(spec=PhenopacketMatrixGenerator)
     data_generator.hpo_term_observation_matrix = pd.DataFrame({
         'HP:0004322': [1, 1, 1],  # 3/3 patients (100%)
         'HP:0001250': [1, 0, 0],   # 1/3 patients (33.3%)
@@ -72,7 +72,7 @@ def test_filter_hpo_matrix_with_threshold(mock_data_generator, mock_classifier):
         HP:0001250 (33.3% → filtered out)
     - Final matrix should be empty
     """
-    filtered_matrix, _ = HPOMatrixProcessor.filter_hpo_matrix(
+    filtered_matrix, _ = HPOMatrixProcessor.prepare_hpo_data(
         mock_data_generator,
         threshold=0.5,
         mode='leaf',

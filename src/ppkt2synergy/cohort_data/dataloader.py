@@ -1,11 +1,14 @@
-import typing
+from typing import Union,List, Optional
 import phenopackets as ppkt
 from ppktstore.registry import configure_phenopacket_registry
 
 
 class CohortDataLoader:
     """
-    A class to load cohort data (Phenopacket objects) from a Phenopacket Store.
+    A utility class for loading GA4GH Phenopacket objects from a Phenopacket Store.
+
+    This class provides methods to access phenotypic data grouped by cohort names, 
+    useful for downstream analysis in biomedical and genomic research.
     """
 
     def __init__(self):
@@ -13,11 +16,11 @@ class CohortDataLoader:
 
     @staticmethod
     def from_ppkt_store(
-        cohort_name: typing.Union[str, typing.List[str]], 
-        ppkt_store_version: typing.Optional[str] = None
-        ) -> typing.List[ppkt.Phenopacket]:
+        cohort_name: Union[str, List[str]], 
+        ppkt_store_version: Optional[str] = None
+        ) -> List[ppkt.Phenopacket]:
         """
-        Retrieve Phenopacket objects for a specific cohort from a Phenopacket Store.
+        Load Phenopacket objects for one or more cohorts from the configured Phenopacket Store.
 
         Args:
             cohort_name (Union[str, List[str]]): A cohort name or list of names
@@ -25,7 +28,8 @@ class CohortDataLoader:
             if the *latest* release should be loaded.
 
         Returns:
-            a list of GA4GH Phenopacket objects for the cohort
+            List[phenopackets.Phenopacket]: A list of Phenopacket objects corresponding 
+            to the specified cohort(s).
         """
         registry = configure_phenopacket_registry()
         with registry.open_phenopacket_store(release=ppkt_store_version) as ps:

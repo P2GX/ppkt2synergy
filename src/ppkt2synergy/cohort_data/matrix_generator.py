@@ -1,57 +1,108 @@
 import pandas as pd
 import phenopackets as ppkt
 from typing import List, Union, IO, Tuple, Callable, Optional
-from .hpo_utils import load_hpo
+from ._utils import load_hpo
+from gpsea.preprocessing import configure_caching_cohort_creator, load_phenopackets
+from gpsea.analysis.predicate import variant_effect
+from gpsea.analysis.clf import monoallelic_classifier
+from gpsea.model import VariantEffect
+from gpsea.analysis.predicate import variant_effect, anyof
 
-class CohortMatrixGenerator:
+class PhenopacketMatrixGenerator:
     """
-    Converts phenopacket data into structured matrices for analysis.
+    Generates structured matrices from phenopacket data for downstream analysis.
 
-    This class generates:
-    1. HPO Term Status Matrix: Indicates whether a patient has certain HPO terms.
-    2. Disease Status Matrix: Indicates whether a patient has been diagnosed with specific diseases.
+    This class supports:
+    1. HPO Term Status Matrix — capturing the presence or exclusion of HPO terms per patient.
+    2. Disease Status Matrix — indicating diagnoses assigned to each patient.
+    3. Optional target matrix — includes additional labels, such as variant effect classification.
 
     Example:
         from ppkt2synergy import CohortDataLoader, CohortMatrixGenerator
-        # Load phenopackets and create matrix generator
         >>> phenopackets = CohortDataLoader.from_ppkt_store('FBN1')
-        >>> matrix_gen = CohortMatrixGenerator(phenopackets)
+        >>> matrix_gen = PhenopacketMatrixGenerator(phenopackets)
     """
 
     def __init__(
             self, 
             phenopackets: List[ppkt.Phenopacket], 
             hpo_file: Union[IO, str] = None,
+            use_labels: bool = False,
+            variant_effect_type: Optional[VariantEffect] = None,
+            mane_tx_id: Optional[Union[str, List[str]]] = None,
             external_target_matrix: Optional[pd.DataFrame] = None):
         """
-        Initializes the CohortMatrixGenerator.
-
         Args:
-            phenopackets (List[Phenopacket]): List of phenopacket instances.
-            hpo_file (str or IO, optional): Path to an HPO ontology file. Loads the latest version if not provided.
+            phenopackets (List[Phenopacket]): A list of Phenopacket instances.
+            hpo_file (str or IO, optional): Path to an HPO ontology file. Loads the latest version if None.
+            variant_effect_type (Optional[str]): An optional variant effect type. Should be a member of `VariantEffect` Enum from `gpsea.model`, e.g., VariantEffect.MISSENSE_VARIANT.
+            mane_tx_id (Optional[str or List[str]]): MANE transcript ID(s) used for variant effect analysis.
+            external_target_matrix (Optional[pd.DataFrame]): Optional predefined target matrix to override defaults.
 
         Raises:
-            ValueError: If the phenopackets list is empty.
-            ValueError: If the HPO file fails to load.
+            ValueError: If `phenopackets` is empty or if HPO file fails to load.
         """
         if not phenopackets:
             raise ValueError("Phenopackets list cannot be empty.")
-
+        
         self.phenopackets = phenopackets
 
         try:
             self.hpo = load_hpo(hpo_file)
         except (IOError, KeyError) as e:
             raise ValueError(f"Failed to load HPO file: {e}")
-        self.hpo_term_observation_matrix, self.hpo_labels = self.generate_hpo_term_status_matrix()
+        
+        self.hpo_term_observation_matrix, self.hpo_labels = self.generate_hpo_term_status_matrix(use_labels,propagate_hierarchy=True)
+        self.hpo_term_observation_matrix = self.hpo_term_observation_matrix.reindex([ppkt.id for ppkt in self.phenopackets])
+        base_target_matrix, base_target_labels = self.generate_target_status_matrix(use_labels)
+        sex_matrix = self._generate_sex_matrix()
+        base_target_matrix = pd.concat([base_target_matrix, sex_matrix], axis=1)
+        base_target_labels = {**base_target_labels, "sex": "sex"}
+        all_target_matrices = [base_target_matrix]
+        all_target_labels = dict(base_target_labels)
+
+        if variant_effect_type and mane_tx_id:
+            label = str(variant_effect_type)
+
+            cohort_creator = configure_caching_cohort_creator(self.hpo)
+            cohort, _ = load_phenopackets(phenopackets=self.phenopackets, cohort_creator=cohort_creator)
+
+            if isinstance(mane_tx_id, list):
+                predicates = [variant_effect(variant_effect_type, tx_id=tx) for tx in mane_tx_id]
+                predicate = anyof(predicates)
+            else:
+                predicate = variant_effect(variant_effect_type, tx_id=mane_tx_id)
+
+            clf = monoallelic_classifier(
+                a_predicate=predicate,
+                b_predicate=~predicate,
+                a_label=label,
+                b_label="other"
+            )
+
+            variant_matrix = pd.DataFrame(
+                data=[1 if (cat := clf.test(p)) and cat.category.name == label else 0 for p in cohort],
+                index=[p.labels._meta_label for p in cohort],
+                columns=[label]
+            )
+
+            all_target_matrices.append(variant_matrix)
+            all_target_labels[label] = label
+
         if external_target_matrix is not None:
-            # Align rows to phenopacket IDs
+            if not isinstance(external_target_matrix, pd.DataFrame):
+                raise ValueError("external_target_matrix must be a pandas DataFrame")
             ppkt_ids = [ppkt.id for ppkt in self.phenopackets]
-            self.target_matrix = external_target_matrix.reindex(ppkt_ids)
-            self.target_labels = {
-                col: col for col in self.target_matrix.columns} 
-        else:
-            self.target_matrix, self.target_labels = self.generate_target_status_matrix()
+            ext_matrix = external_target_matrix.reindex(ppkt_ids)
+            all_target_matrices.append(ext_matrix)
+            all_target_labels.update({col: col for col in ext_matrix.columns})
+            
+        self.target_matrix = pd.concat(all_target_matrices, axis=1).reindex([ppkt.id for ppkt in self.phenopackets])
+        self.target_labels = all_target_labels
+        
+
+
+            
 
     def generate_hpo_term_status_matrix(
             self, 
@@ -59,34 +110,28 @@ class CohortMatrixGenerator:
             propagate_hierarchy: bool = True,
             ) -> Tuple[pd.DataFrame, dict]:
         """
-        Creates a binary matrix indicating the presence/absence of HPO terms for each patient.
+        Constructs a binary matrix indicating the presence or exclusion of HPO terms for each patient.
 
-        Matrix structure:
-        - Rows: Individual patient IDs.
-        - Columns: Unique HPO terms (e.g., HP:0004322 = "Seizures").
+        Structure of the resulting matrix:
+        - Rows: Patient IDs
+        - Columns: HPO term IDs (e.g., HP:0004322)
         - Values:
-            - 1 → Term is observed in the patient.
-            - 0 → Term is explicitly excluded for the patient.
-            - NaN → No information available.
+            - 1 → Term is observed in the patient
+            - 0 → Term is explicitly excluded
+            - NaN → No information
 
-        Example output (before propagation):
-                     HP:0004322  HP:0001250  HP:0012759
-        Patient_1         1         NaN         0
-        Patient_2         NaN        1          NaN
-     
-        
-        Propagation rules:
-        - Observed terms (1) propagate to their ancestors.
-        - Excluded terms (0) propagate to their descendants.
+        Propagation (if enabled):
+        - Observed terms (1) propagate to all ancestors in the ontology
+        - Excluded terms (0) propagate to all descendants
 
         Args:
-            use_labels (bool): If True, replaces HPO term IDs with their human-readable labels.
-            propagate_hierarchy (bool): If True, applies hierarchical propagation (only for HPO terms).
+            use_labels (bool): If True, replaces HPO IDs with human-readable labels.
+            propagate_hierarchy (bool): If True, applies ontology-based propagation.
 
         Returns:
-            Tuple:
-                - pd.DataFrame: The HPO term status matrix.
-                - dict: A mapping of HPO term IDs to their labels.
+            Tuple[pd.DataFrame, dict]: 
+                - The HPO status matrix
+                - A mapping from HPO term IDs to their labels
         """
         return self._generate_status_matrix(
             feature_extractor=lambda ppkt: [
@@ -101,34 +146,26 @@ class CohortMatrixGenerator:
             use_labels: bool = False
             ) -> Tuple[pd.DataFrame, dict]:
         """
-        Creates a binary matrix indicating the presence/absence of diagnosed diseases.
+        Constructs a binary matrix indicating whether each patient has been diagnosed with specific diseases.
 
-        Matrix structure:
-        - Rows: Individual patient IDs.
-        - Columns: Unique disease IDs (e.g., OMIM:101600 = "Marfan Syndrome").
+        Structure of the resulting matrix:
+        - Rows: Patient IDs
+        - Columns: Disease IDs (e.g., OMIM:101600)
         - Values:
-            - 1 → Patient is diagnosed with this disease.
-            - 0 → No diagnosis (default).
-        
-        Example output:
-                     OMIM:101600  OMIM:603903
-        Patient_1         1            0
-        Patient_2         0            1
+            - 1 → Patient has been diagnosed with this disease
+            - 0 → No diagnosis recorded (default)
 
         Args:
-            use_labels (bool): If True, replaces disease IDs with their human-readable labels.
+            use_labels (bool): If True, replaces disease IDs with their corresponding labels.
 
         Returns:
-            Tuple:
-                - pd.DataFrame: The disease status matrix.
-                - dict: A mapping of disease IDs to their labels.
+            Tuple[pd.DataFrame, dict]: 
+                - The disease status matrix
+                - A mapping from disease IDs to their labels
         """
         return self._generate_status_matrix(
             feature_extractor=lambda ppkt: [
-                (d.disease.id, d.disease.label, 1) 
-                for interp in (ppkt.interpretations or []) 
-                if interp.diagnosis and interp.diagnosis.disease
-                for d in [interp.diagnosis]
+                (f.term.id, f.term.label, 0 if f.excluded else 1) for f in ppkt.diseases
             ],
             propagate_hierarchy=False,
             use_labels=use_labels
@@ -141,16 +178,17 @@ class CohortMatrixGenerator:
         use_labels: bool
     ) -> Tuple[pd.DataFrame, dict]:
         """
-        General method to construct status matrices for either HPO terms or diseases.
+        Internal method to generate a binary matrix from any phenopacket feature set (e.g., HPO terms, diseases).
 
         Args:
-            feature_extractor (Callable): Function to extract features (HPO terms or diseases) from a phenopacket.
-            propagate_hierarchy (bool): If True, applies hierarchical propagation (only for HPO terms).
-            use_labels (bool): If True, replaces term/disease IDs with their human-readable labels.
+            feature_extractor (Callable): Function that extracts (id, label, value) tuples from each phenopacket.
+            propagate_hierarchy (bool): If True, applies hierarchical propagation (only relevant for HPO).
+            use_labels (bool): If True, replaces feature IDs with human-readable labels.
 
         Returns:
-            - pd.DataFrame: The resulting binary matrix.
-            - dict: A mapping of feature IDs to their labels.
+            Tuple[pd.DataFrame, dict]: 
+                - The binary matrix
+                - A mapping from feature IDs to their labels
         """
         feature_ids, feature_labels, status_data = set(), {}, {}
 
@@ -176,36 +214,42 @@ class CohortMatrixGenerator:
             matrix: pd.DataFrame
             ) -> pd.DataFrame:
         """
-        Propagates HPO term statuses using ontology hierarchy.
+        Applies hierarchical propagation to an HPO term matrix.
 
-        Propagation rules:
-        - Observed terms (1) propagate to their ancestors.
-        - Excluded terms (0) propagate to their descendants.
+        Propagation logic:
+        - A value of 1 (observed) propagates to all ancestors of the corresponding HPO term.
+        - A value of 0 (excluded) propagates to all descendants.
 
-        Example:
-        HP:0012759 (Neurological abnormality)
-        ├── HP:0001250 (Seizures)
-        │   ├── HP:0004322 (Focal seizures)
-        Before propagation:
-                     HP:0004322  HP:0001250  HP:0012759
-        Patient_1         1         NaN         NaN
-        Patient_2         NaN        0          NaN
+        Example (before propagation):
+            HP:0012759 (Neurological abnormality)
+            ├── HP:0001250 (Seizures)
+            │   └── HP:0004322 (Focal seizures)
 
-        After propagation:
-                     HP:0004322  HP:0001250  HP:0012759
-        Patient_1         1         1         1   # 1 propagates to ancestors
-        Patient_2         0         0         NaN   # 0 propagates to descendants
+            Matrix:
+                         HP:0004322  HP:0001250  HP:0012759
+            Patient_1         1         NaN         NaN
+            Patient_2         NaN        0          NaN
 
+        Example (after propagation):
+                         HP:0004322  HP:0001250  HP:0012759
+            Patient_1         1         1          1
+            Patient_2         0         0          NaN
 
         Args:
-            matrix (pd.DataFrame): The initial HPO status matrix.
+            matrix (pd.DataFrame): HPO status matrix to propagate.
 
         Returns:
-            `pd.DataFrame`: The matrix after propagation.
+            pd.DataFrame: The matrix with propagated values.
         """
+        invalid_terms = []
         for hpo_id in matrix.columns:
-            ancestors = {term.value for term in self.hpo.graph.get_ancestors(hpo_id)}
-            descendants = {term.value for term in self.hpo.graph.get_descendants(hpo_id)}
+            try:
+                ancestors = {term.value for term in self.hpo.graph.get_ancestors(hpo_id)}
+                descendants = {term.value for term in self.hpo.graph.get_descendants(hpo_id)}
+
+            except ValueError:
+                invalid_terms.append(hpo_id)
+                continue        
 
             valid_ancestors = ancestors & set(matrix.columns)
             valid_descendants = descendants & set(matrix.columns)
@@ -217,4 +261,29 @@ class CohortMatrixGenerator:
             if valid_descendants:
                 mask = matrix[hpo_id] == 0
                 matrix.loc[mask, list(valid_descendants)] = 0  
+        if invalid_terms:
+            matrix.drop(columns=invalid_terms, inplace=True) 
         return matrix
+    
+    def _generate_sex_matrix(self) -> pd.DataFrame:
+        """
+        Creates a binary sex matrix with:
+        - 1 → Male
+        - 0 → Female
+        - NaN → Unknown, Other, or missing
+
+        Returns:
+            pd.DataFrame: Sex matrix with patient IDs as index and a single column 'male'.
+        """
+        sex_data = {}
+
+        for ppkt in self.phenopackets:
+            if ppkt.subject.sex == 'MALE':
+                sex_data[ppkt.id] = 1
+            elif ppkt.subject.sex == 'FEMALE':
+                sex_data[ppkt.id] = 0
+            else:
+                sex_data[ppkt.id] = float('nan')
+
+        return pd.DataFrame.from_dict(sex_data, orient='index', columns=['male'])
+
