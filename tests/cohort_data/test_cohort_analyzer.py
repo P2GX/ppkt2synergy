@@ -4,7 +4,7 @@ import numpy as np
 from unittest.mock import MagicMock
 
 # Assuming the module name is hpo_analysis
-from ppkt2synergy import HPOCorrelationAnalyzer
+from ppkt2synergy import HPOStatisticsAnalyzer
 
 MIN_INDIVIDUALS_FOR_CORRELATION_TEST=40
 @pytest.fixture
@@ -42,7 +42,7 @@ def hpo_analyzer(mock_cohort_matrix_generator):
     """
     Create an instance of HPOCorrelationAnalyzer with the mock cohort_matrix_generator.
     """
-    return HPOCorrelationAnalyzer(mock_cohort_matrix_generator)
+    return HPOStatisticsAnalyzer(mock_cohort_matrix_generator)
 
 
 def test_combine_matrices(hpo_analyzer):

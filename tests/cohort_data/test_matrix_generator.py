@@ -3,7 +3,7 @@ import json
 import phenopackets as ppkt
 import pandas as pd
 from unittest.mock import patch
-from ppkt2synergy import CohortMatrixGenerator
+from ppkt2synergy import PhenopacketMatrixGenerator
 import pathlib
 
 TEST_DIR = pathlib.Path(__file__).parent.parent.resolve()
@@ -69,7 +69,7 @@ def test_hpo_and_disease_matrix(mock_load_hpo, mock_phenopackets,load_hpo_from_f
     mock_load_hpo.return_value = load_hpo_from_file  # Provide the HPO hierarchy to the generator
     
     # Instantiate the matrix generator without passing propagate_hierarchy until calling generate_hpo_term_status_matrix
-    matrix_generator = CohortMatrixGenerator(mock_phenopackets, hpo_file="tests/data/hp.json")
+    matrix_generator = PhenopacketMatrixGenerator(mock_phenopackets, hpo_file="tests/data/hp.json")
 
 #                 HP:0020219   HP:0001250   HP:0012759
     #Patient 1        1            NaN            1

@@ -1,7 +1,9 @@
-from typing import List, Dict, Set, Union, IO
-from .hpo_utils import load_hpo
-from .matrix_generator import CohortMatrixGenerator
+from typing import List, Dict, Set, Union, IO, Optional,Tuple
+from ._utils import load_hpo
+from .matrix_generator import PhenopacketMatrixGenerator
 import pandas as pd
+import phenopackets as ppkt
+from gpsea.model import VariantEffect
 
 class HPOMatrixProcessor:
     """
@@ -13,39 +15,52 @@ class HPOMatrixProcessor:
     - Optionally replaces term IDs with human-readable labels.
 
     Example:
-        >>> matrix_gen = CohortMatrixGenerator(phenopackets)
-        >>> hpo_mat, disease_mat = HPOTermFilter.filter_by_hierarchy(
-        ...     matrix_gen, max_na_ratio=0.3, term_level='leaf')
+        from ppkt2synergy import CohortDataLoader, HPOMatrixProcessor
+        >>> phenopackets = CohortDataLoader.from_ppkt_store('FBN1')
+        >>> hpo_matrix, target_matrix = HPOMatrixProcessor.prepare_hpo_data(
+            phenopackets,  threshold=0.5, mode='leaf', use_label=True)
     """
 
+    def __init__(self):
+        pass
+
     @staticmethod
-    def filter_hpo_matrix(
-        data_generator: CohortMatrixGenerator, 
+    def prepare_hpo_data(
+        phenopackets: List[ppkt.Phenopacket], 
+        hpo_file: Union[IO, str] = None,
+        variant_effect_type: Optional[VariantEffect] = None,
+        mane_tx_id: Optional[Union[str, List[str]]] = None,
+        external_target_matrix: Optional[pd.DataFrame] = None, 
         threshold: float = 0.5, 
         mode: str = 'leaf',
-        hpo_file: Union[IO, str] = None, 
         use_label: bool = True,
-        nan_strategy='fill',
-    ) -> pd.DataFrame:
+        nan_strategy=None,
+    ) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
         Filters the HPO term matrix by selecting features based on term hierarchy (root/leaf).
 
         Args:
-            data_generator (CohortMatrixGenerator): 
-                An instance generating the HPO term observation matrix and disease matrix.
-            threshold (float, default 0.5): 
-                Maximum allowed proportion of NaN values. Columns exceeding this threshold are dropped.
-                (e.g., threshold=0.5 means columns with more than 50% missing values will be removed).
-            mode (str, default 'leaf'): 
-                Select "root" to retain root terms or "leaf" to retain leaf terms.
+            phenopackets (List[Phenopacket]): 
+                List of phenopackets to generate observation matrices.
             hpo_file (Union[IO, str], optional): 
                 Path or URL to the HPO ontology file.
+            variant_effect_type (Optional[VariantEffect]): 
+                Type of variant effect to filter by (optional).
+            mane_tx_id (Optional[str or List[str]]): 
+                Specific transcript ID(s) to filter variants.
+            external_target_matrix (Optional[pd.DataFrame]): 
+                Optional external matrix representing targets.
+            threshold (float, default 0.5): 
+                Maximum allowed proportion of NaN values. Columns exceeding this threshold are dropped.
+            mode (str, default 'leaf'): 
+                Select "root" to retain root terms or "leaf" to retain leaf terms.
             use_label (bool, default True): 
                 Whether to replace term IDs with their labels (if available).
-            nan_strategy (str, default 'fill'):
+            nan_strategy (str, optional):
                 Strategy for handling missing values.
                 - "fill": fill NaNs with 0
                 - "drop": drop rows with any NaNs
+                - None: do not handle missing values
 
         Returns:
             Tuple[pd.DataFrame, pd.DataFrame]: 
@@ -62,17 +77,13 @@ class HPOMatrixProcessor:
             raise ValueError(f"NaN threshold {threshold} must be between 0 and 1")
         if mode not in {'leaf', 'root'}:
             raise ValueError(f"Invalid mode: '{mode}'. Choose 'leaf' or 'root'.")
-
+        
+        data_generator = PhenopacketMatrixGenerator(phenopackets=phenopackets,hpo_file=hpo_file,variant_effect_type=variant_effect_type,mane_tx_id=mane_tx_id,external_target_matrix=external_target_matrix,use_labels=False) 
+        
         hpo_matrix = data_generator.hpo_term_observation_matrix
         target_matrix = data_generator.target_matrix
 
-        # Align sample indices first
-        common_index = hpo_matrix.index.intersection(target_matrix.index)
-        hpo_matrix = hpo_matrix.loc[common_index]
-        target_matrix = target_matrix.loc[common_index]
-
         hpo_matrix_filtered = hpo_matrix.dropna(axis=1, thresh=int(threshold * len(hpo_matrix)))
-
 
         classifier = HPOHierarchyClassifier(hpo_file)
         selected_columns = HPOMatrixProcessor._select_terms_by_hierarchy(hpo_matrix_filtered, classifier, mode)
@@ -85,8 +96,10 @@ class HPOMatrixProcessor:
         elif nan_strategy == "drop":
             final_matrix = hpo_matrix_filtered[selected_columns].dropna(axis=0)
             target_matrix = target_matrix.loc[final_matrix.index]
-        else:
-            raise ValueError(f"Invalid nan_strategy: {nan_strategy}. Use 'fill' or 'drop'.")
+        elif nan_strategy is None:
+            final_matrix = hpo_matrix_filtered[selected_columns]
+        else :
+            raise ValueError(f"Invalid nan_strategy: {nan_strategy}. Use 'fill', 'drop', or None.")
         target_matrix = target_matrix.fillna(0)
 
         # Replace term IDs with labels 
@@ -146,9 +159,11 @@ class HPOMatrixProcessor:
 class HPOHierarchyClassifier:
     """
     Identifies root and leaf terms in HPO term subtrees.
+    - Each root is the top-most term in a connected subtree (no ancestors in given set).
+    - If a root has no children, it is considered a leaf itself.
     
     Example:
-        classifier = HPOHierarchyClassifier("path/to/hpo.obo")
+        classifier = HPOHierarchyClassifier()
         result = classifier._get_subtree_terms({"HP:0004322", "HP:0001250", "HP:0012758"})
         print(result)
         # Output:
@@ -189,13 +204,20 @@ class HPOHierarchyClassifier:
                 - "leaves": Leaf terms in the subtree.
         """
         roots = self._find_roots(terms)
-        return {
-            root: {
-                "terms": list(self._get_subtree_terms(root, terms)),
-                "leaves": self._extract_leaves(root, terms)
-            }
-            for root in roots
-        }
+        results = {}
+        for root in roots:
+            subtree = self._get_subtree_terms(root, terms)
+            if len(subtree) == 1:
+                results[root] = {
+                    "terms": list(subtree),
+                    "leaves": list(subtree)
+                }
+            else:
+                results[root] = {
+                    "terms": list(subtree),
+                    "leaves": self._extract_leaves(subtree, terms)
+                }
+        return results
 
     def _find_roots(
             self, 
@@ -221,11 +243,10 @@ class HPOHierarchyClassifier:
 
     def _extract_leaves(
             self, 
-            root: str, 
+            subtree: Set[str], 
             terms: Set[str]
             ) -> List[str]:
         """ Finds leaf terms (terms with no descendants in the given set). """
-        subtree = self._get_subtree_terms(root, terms)
         return [t for t in subtree if not any(d.value in terms for d in self.hpo.graph.get_descendants(t))]
 
     
