@@ -1,14 +1,12 @@
-from .cohort_data import load_hpo
-from .cohort_data import CohortDataLoader
-from .cohort_data import PhenopacketMatrixGenerator
-from .cohort_data import HPOHierarchyClassifier,HPOMatrixProcessor
-from .cohort_data import HPOStatisticsAnalyzer
+from .io import CohortDataLoader, load_hpo
+from .preprocessing import PhenopacketMatrixGenerator
+from .preprocessing import PhenopacketMatrixProcessor,HPOHierarchyUtils
+from .analysis import HPOStatisticsAnalyzer, PairwiseSynergyAnalyzer
 from .synergy_tree import SynergyTreeBuilder
 from .synergy_tree import SynergyTreeVisualizer, SynergyTreeVisualizerconnected
 from .synergy_tree import MutualInformationCalculator
 from .synergy_tree import PartitionGenerator
 from .synergy_tree import TreeNode,LeafNode,InternalNode
-from .synergy_tree import PairwiseSynergyAnalyzer
 
 
 __version__ = "0.0.2"
@@ -18,9 +16,10 @@ __all__ = [
     "load_hpo",
     "CohortDataLoader",
     "PhenopacketMatrixGenerator",
-    "HPOHierarchyClassifier",
+    "PhenopacketMatrixProcessor",
+    "HPOHierarchyUtils",
     "HPOStatisticsAnalyzer",
-    "HPOMatrixProcessor",
+    "PairwiseSynergyAnalyzer",
     "SynergyTreeBuilder",
     "SynergyTreeVisualizer",
     "SynergyTreeVisualizerconnected",
@@ -28,6 +27,5 @@ __all__ = [
     "PartitionGenerator",
     "TreeNode",
     "LeafNode",
-    "InternalNode",
-    "PairwiseSynergyAnalyzer",
+    "InternalNode",  
 ]
