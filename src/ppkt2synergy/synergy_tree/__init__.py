@@ -2,7 +2,8 @@ from .mi_calculator import MutualInformationCalculator
 from .partition import PartitionGenerator
 from .tree_node import TreeNode,LeafNode,InternalNode
 from .builder import SynergyTreeBuilder
-from .visualizer import SynergyTreeVisualizer,SynergyTreeVisualizerall
+from .visualizer import SynergyTreeVisualizer,SynergyTreeVisualizerconnected
+
 
 
 __all__ = [
@@ -13,5 +14,5 @@ __all__ = [
     "InternalNode",
     "SynergyTreeBuilder",
     "SynergyTreeVisualizer",
-    "SynergyTreeVisualizerall"
+    "SynergyTreeVisualizerconnected",
 ]

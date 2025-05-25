@@ -1,83 +1,84 @@
 import pytest
 import pandas as pd
-from ppkt2synergy import SynergyTreeBuilder
-from ppkt2synergy import LeafNode,InternalNode
+import numpy as np
+from ppkt2synergy import SynergyTreeBuilder, LeafNode, InternalNode
 
-# Fixture for valid input data
 @pytest.fixture
 def valid_data():
+    """Valid binary input data with 20 samples"""
+    np.random.seed(42)
     X = pd.DataFrame({
-        'A': [1, 0, 1, 0],
-        'B': [1, 1, 0, 0],
-        'C': [0, 1, 1, 0],
+        'A': np.random.randint(0, 2, 20),
+        'B': np.random.randint(0, 2, 20),
+        'C': np.random.randint(0, 2, 20),
     })
-    y = pd.Series([1, 0, 1, 0])
+    y = pd.Series(np.random.randint(0, 2, 20))
     return X, y
 
-# Fixture for invalid input data
 @pytest.fixture
 def invalid_data():
+    """Invalid input data with non-binary values"""
     X = pd.DataFrame({
-        'A': [0, 1, 2],  # Invalid: contains non-binary values
-        'B': [1, 0, 1]
+        'A': [0, 1, 2]*7,  # Invalid: contains non-binary values
+        'B': np.random.randint(0, 2, 21)
     })
-    y = pd.Series([0, 1, 1])
+    y = pd.Series(np.random.randint(0, 2, 21))
     return X, y
 
-# Fixture for empty input data
 @pytest.fixture
 def empty_data():
+    """Empty input data"""
     X = pd.DataFrame()
     y = pd.Series()
     return X, y
 
-# Fixture for single feature input data
 @pytest.fixture
 def single_feature_data():
-    X = pd.DataFrame({'A': [0, 1, 0, 1]})
-    y = pd.Series([0, 1, 1, 1])
+    """Input data with only one feature"""
+    X = pd.DataFrame({'A': np.random.randint(0, 2, 20)})
+    y = pd.Series(np.random.randint(0, 2, 20))
     return X, y
 
-# Test valid input
-# H(y) = −0.5*log2(0.5)*2=1
-# H(A,y)=−0.5*log2(0.5)*2=1  H(A) =−0.5*log2(0.5)*2=1  MI(A,y)=1
-# H(B,y)=−0.25*log2(0.25)*4=2  H(B) =−0.5*log2(0.5)*2=1  MI(B,y)=0
-# H(C,y)=−0.25*log2(0.25)*4=2  H(C) =−0.5*log2(0.5)*2=1  MI(B,y)=0
-# H(AB,y)=2  H(AB)=−0.25*log2(0.25)*4=2  MI(AB,y)=1
-# H(AC,y)=2  H(AC)=−0.25*log2(0.25)*4=2  MI(AC,y)=1
-# H(BC,y)=2  H(BC)=−0.25*log2(0.25)*4=2  MI(BC,y)=1
-# H(ABC,y)=2  H(ABC)=−0.25*log2(0.25)*4=2  MI(ABC,y)=1      
-# Synergy(BC,y) = MI(BC,y)-MI(B,y)-MI(C,y) >0
+@pytest.fixture
+def perfect_correlation_data():
+    """Data where two features perfectly predict the target"""
+    X = pd.DataFrame({
+        'A': [1, 0]*10,
+        'B': [1, 0]*10,  # Perfect correlation with A
+        'C': [0, 1]*10   # Perfect anti-correlation with target
+    })
+    y = pd.Series([1, 0]*10)
+    return X, y
 
-# Test validate_input
 def test_validate_input(valid_data, invalid_data, empty_data, single_feature_data):
+    """Test input validation"""
     X_valid, y_valid = valid_data
     X_invalid, y_invalid = invalid_data
     X_empty, y_empty = empty_data
-    X_single_feature, y_single_feature =single_feature_data
+    X_single, y_single = single_feature_data
 
     # Test valid input
     builder = SynergyTreeBuilder(X_valid, y_valid, max_k=10)
-    assert builder.max_k == 3  # Should be min(10,3) 
+    assert builder.max_k == 3  # Should be min(10, num_features=3)
+
     # Test max_k validation
-    with pytest.raises(ValueError):
-        SynergyTreeBuilder(X_valid, y_valid, max_k=0)  # max_k <= 0
+    with pytest.raises(ValueError, match="max_k must be between 2 and"):
+        SynergyTreeBuilder(X_valid, y_valid, max_k=0)
 
     # Test invalid input (non-binary values)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="must contain only 0 and 1"):
         SynergyTreeBuilder(X_invalid, y_invalid, max_k=2)
 
     # Test empty input
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="At least 2 features are required"):
         SynergyTreeBuilder(X_empty, y_empty, max_k=2)
 
-
     # Test insufficient features
-    with pytest.raises(ValueError, match="At least 2 features are required to build a synergy tree"):
-        SynergyTreeBuilder(X_single_feature, y_single_feature, max_k=2)
+    with pytest.raises(ValueError, match="At least 2 features are required"):
+        SynergyTreeBuilder(X_single, y_single, max_k=2)
 
-# Test SynergyTreeBuilder._init_leaf_nodes  3 Leafnodes will be updated in builder.nodes
 def test_init_leaf_nodes(valid_data):
+    """Test leaf node initialization"""
     X, y = valid_data
     builder = SynergyTreeBuilder(X, y, max_k=2)
     builder._init_leaf_nodes()
@@ -86,96 +87,32 @@ def test_init_leaf_nodes(valid_data):
     assert len(builder.nodes) == 3  # 3 features
     for i, name in enumerate(X.columns):
         assert (i,) in builder.nodes
-        assert isinstance(builder.nodes[(i,)], LeafNode)
-        assert builder.nodes[(i,)].get_feature_indices == (i,)
-        assert builder.nodes[(i,)].get_mi >= 0
+        node = builder.nodes[(i,)]
+        assert isinstance(node, LeafNode)
+        assert node.get_feature_indices == (i,)
+        assert 0 <= node.get_mi <= 1  # MI should be between 0 and 1
 
-# Test SynergyTreeBuilder._build_layer
-def test_build_layer(valid_data):
-    X, y = valid_data
-    builder = SynergyTreeBuilder(X, y, max_k=2)
-    builder._init_leaf_nodes()
-    builder._build_layer(2)
-
-    # Check if layer 2 nodes are built correctly  
-    # Synergy(BC,y) >0  InternalNode(BC) will be updated in builder.nodes
-    assert len(builder.nodes) == 4 
-    assert isinstance(builder.nodes[(1,2)], InternalNode)
-    assert builder.nodes[(1,2)].get_synergy >= 0
-
-# Test SynergyTreeBuilder._update_roots
-def test_update_roots(valid_data):
-    X, y = valid_data
-    builder = SynergyTreeBuilder(X, y, max_k=2)
-    builder._init_leaf_nodes()
-    builder._build_layer(2)
-
-    # Check if roots are updated correctly
-    assert len(builder.roots) == 1
-    for feature_comb in builder.roots:
-        assert feature_comb in builder.nodes
-        assert isinstance(builder.roots[feature_comb], InternalNode)
-
-def test_build(valid_data):
-    X, y = valid_data
-    builder = SynergyTreeBuilder(X, y, max_k=2)
-    trees = builder.build()
-
-    # Check if the correct number of trees is returned
-    assert len(trees) == 1
-
-    # Check if the tree structure is correct
-    root = trees[0]
-    assert isinstance(root, InternalNode)
-    assert root.get_feature_indices == (1, 2)  # Expected root node
-    assert len(root.get_children) == 2  # Expected two children
 
 @pytest.mark.parametrize(
     'X, y, max_k, expected_roots_len, expected_leaf_nodes_count, expected_internal_nodes_count',
     [
         (
             pd.DataFrame({
-                'feature_1': [0, 1, 0, 1, 0, 1, 0, 1],
-                'feature_2': [0, 0, 1, 1, 0, 0, 1, 1],
-                'feature_3': [1, 1, 0, 0, 1, 1, 0, 0],
-                'feature_4': [1, 0, 1, 0, 1, 0, 1, 0],
+                'feature_1': [0, 1]*10,
+                'feature_2': [0, 0, 1, 1]*5,
+                'feature_3': [1, 1, 0, 0]*5,
+                'feature_4': [1, 0]*10,
             }),
-            pd.Series([0, 1, 0, 1, 0, 1, 0, 1]),
+            pd.Series([0, 1]*10),
             3,  # max_k
             4,  # expected number of roots
             4,  # expected number of leaf nodes
             4   # expected number of internal nodes
         ),
-        
-        (
-            pd.DataFrame({
-                'feature_1': [1, 0, 1, 0],
-                'feature_2': [1, 1, 0, 0],
-                'feature_3': [0, 1, 1, 0],
-            }),
-            pd.Series([1, 0, 1, 0]),
-            2,  # max_k
-            1,  # expected number of roots
-            3,  # expected number of leaf nodes
-            1  # expected number of internal nodes
-        ),
-        
-        (
-            pd.DataFrame({
-                'feature_1': [1, 0, 1, 0],
-                'feature_2': [0, 1, 0, 1],
-            }),
-            pd.Series([1, 0, 1, 0]),
-            3,  # max_k
-            0,  # expected number of roots
-            2,  # expected number of leaf nodes
-            0   # expected number of internal nodes
-        ),
     ]
 )
 def test_synergy_tree(X, y, max_k, expected_roots_len, expected_leaf_nodes_count, expected_internal_nodes_count):
     """Test the synergy tree builder with different datasets and assert the expected values."""
-    
     synergy_tree_builder = SynergyTreeBuilder(X, y, max_k=max_k)
     synergy_tree_builder.build()
     

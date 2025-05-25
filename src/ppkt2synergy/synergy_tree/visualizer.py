@@ -60,7 +60,7 @@ class SynergyTreeVisualizer:
                 self._add_node(graph, child, node_id, tree_index)
 
 
-class SynergyTreeVisualizerall:
+class SynergyTreeVisualizerconnected:
     """
     Visualizes synergy trees separately using Graphviz.
     """
