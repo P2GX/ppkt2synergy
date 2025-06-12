@@ -136,6 +136,7 @@ class PhenopacketMatrixProcessor:
         if use_label:
             final_matrix = PhenopacketMatrixProcessor._apply_hpo_labels(final_matrix, data_generator)
             target_matrix = PhenopacketMatrixProcessor._apply_hpo_labels(target_matrix, data_generator)
+            relationship_mask = PhenopacketMatrixProcessor._apply_hpo_labels(relationship_mask, data_generator) if mode is None else None
 
         return ((final_matrix, relationship_mask  if mode is None else None ), target_matrix) 
 

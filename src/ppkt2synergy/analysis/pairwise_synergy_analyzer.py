@@ -1,12 +1,9 @@
 from sklearn.metrics import mutual_info_score
 from joblib import Parallel, delayed
-from itertools import combinations
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
-from matplotlib.patches import Rectangle 
 from typing import Tuple, Union, Optional
+import plotly.graph_objs as go
 
 class PairwiseSynergyAnalyzer:
     """
@@ -67,20 +64,18 @@ class PairwiseSynergyAnalyzer:
             hpo_matrix = hpo_matrix.to_numpy()
         else:
             raise TypeError("hpo_matrix must be a pandas DataFrame")
-        
         if not np.all(np.isin(hpo_matrix[~np.isnan(hpo_matrix)], [0, 1])):
             raise ValueError("Non-NaN values in HPO Matrix must be either 0 or 1")
         
         if isinstance(target, (pd.Series, pd.DataFrame)):
             target = target.to_numpy().ravel()
-        
         if len(target) != hpo_matrix.shape[0]:
             raise ValueError("The number of samples in Target must match the number of samples in HPO Matrix")
         if not np.all(np.isin(target[~np.isnan(target)], [0, 1])):
             raise ValueError("Target must contain only 0, 1, or NaN")
         
 
-        self.X = hpo_matrix.astype(float)
+        self.X = hpo_matrix
         self.y = target
         self.n_features = hpo_matrix.shape[1]
         self.n_permutations = n_permutations
@@ -98,11 +93,9 @@ class PairwiseSynergyAnalyzer:
                 raise ValueError("mask must have the same number of rows and columns as hpo_matrix has features")
             if not np.all(np.isin(relationship_mask_numpy[~np.isnan(relationship_mask_numpy)], [0])):
                 raise ValueError("relationship_mask must contain only 0 or NaN")
-            self.synergy_matrix = relationship_mask_numpy.astype(float)
+            self.synergy_matrix = relationship_mask_numpy
         else:
-            self.synergy_matrix = np.zeros((self.n_features, self.n_features))
-
-        self.pvalue_matrix = np.ones((self.n_features, self.n_features))
+            self.synergy_matrix = np.full((self.n_features, self.n_features), np.nan)
 
         if min_individuals_for_synergy_caculation < 40:
             raise ValueError("min_individuals_for_synergy_caculation must be greater than 40.")
@@ -162,22 +155,16 @@ class PairwiseSynergyAnalyzer:
                 - corrected_synergy (float): Corrected synergy score.
                 - p_value (float): Empirical p-value from permutation test.
         """
-        mask = (
-            ~np.isnan(self.X[:, i]) 
-            & ~np.isnan(self.X[:, j]) 
-            & ~np.isnan(self.y)
-        )
+        mask = (~np.isnan(self.X[:, i]) & ~np.isnan(self.X[:, j]) & ~np.isnan(self.y))
         xi = self.X[mask, i]
         xj = self.X[mask, j]
         y = self.y[mask]
-        if len(y) < self.min_individuals_for_synergy_caculation: 
-            return i, j, np.nan, 1.0
 
-        xi = xi.astype(int)
-        xj = xj.astype(int)
+        if len(y) < self.min_individuals_for_synergy_caculation: 
+            return i, j, np.nan, np.nan
 
         if np.all(xi == xi[0]) or np.all(xj == xj[0]) or np.all(y == y[0]):
-            return i, j, np.nan, 1.0
+            return i, j, np.nan, np.nan
         
         if np.array_equal(xi, xj):
             return i, j, 0.0, 1.0
@@ -209,8 +196,9 @@ class PairwiseSynergyAnalyzer:
 
     def compute_synergy_matrix(
             self, 
-            n_jobs=-1
-        ) -> Tuple[pd.DataFrame, pd.DataFrame]:
+            n_jobs=-1,
+            output_file: Optional[str] = None
+        ) -> None:
         """
         Computes the pairwise synergy scores and permutation-based p-values for all feature pairs.
 
@@ -220,13 +208,8 @@ class PairwiseSynergyAnalyzer:
         Args:
             n_jobs (int, optional): (default: -1)
                 Number of parallel jobs to run. Set to -1 to use all available CPU cores.
-
-        Returns:
-            Tuple[pd.DataFrame, pd.DataFrame]:
-                - synergy_matrix (pd.DataFrame): 
-                    Symmetric matrix (n_features x n_features) containing synergy scores between feature pairs.
-                - pvalue_matrix (pd.DataFrame): 
-                    Symmetric matrix of empirical p-values for each synergy score.
+            output_file (Optional[str]): (default: None)
+                If provided, saves the result to Excel.
         """
         combinations_list = [    
             (i, j) for i in range(self.n_features) for j in range(i + 1, self.n_features)
@@ -236,18 +219,15 @@ class PairwiseSynergyAnalyzer:
         results = Parallel(n_jobs=n_jobs)(
             delayed(self.evaluate_pair_synergy)(i, j) for i, j in combinations_list
         )
+        pvalue_matrix = np.full((self.n_features, self.n_features), np.nan)
         for i, j, synergy, pval in results:
             self.synergy_matrix[i, j] = self.synergy_matrix[j, i] = synergy
-            self.pvalue_matrix[i, j] = self.pvalue_matrix[j, i] = pval
+            pvalue_matrix[i, j] = pvalue_matrix[j, i] = pval
 
-        valid_mask = ~(
-            (np.isnan(self.synergy_matrix).all(axis=0)) | 
-            (np.nan_to_num(self.synergy_matrix, nan=0).sum(axis=0) == 0)
-        )
+        valid_mask = ~((np.isnan(self.synergy_matrix).all(axis=0)) | (np.nan_to_num(self.synergy_matrix, nan=0).sum(axis=0) == 0))
         valid_hpo_terms = self.hpo_terms[valid_mask]
-
-        np.fill_diagonal(self.synergy_matrix, np.nan)
-        np.fill_diagonal(self.pvalue_matrix, np.nan)
+        if len(valid_hpo_terms) == 0:
+            print("Warning: No valid synergy between HPO terms. Synergy matrix will be empty.")
 
         self.synergy_matrix = pd.DataFrame(
             self.synergy_matrix[np.ix_(valid_mask, valid_mask)],
@@ -256,12 +236,31 @@ class PairwiseSynergyAnalyzer:
         )
 
         self.pvalue_matrix = pd.DataFrame(
-            self.pvalue_matrix[np.ix_(valid_mask, valid_mask)],
+            pvalue_matrix[np.ix_(valid_mask, valid_mask)],
             index=valid_hpo_terms,
             columns=valid_hpo_terms
         )
 
-        return self.synergy_matrix, self.pvalue_matrix
+        if output_file is not None:
+            rows = []
+            for i, f1 in enumerate(self.synergy_matrix.index):
+                for j, f2 in enumerate(self.synergy_matrix.columns):
+                    if j > i:  # only upper triangle
+                        syn_val = self.synergy_matrix.iloc[i, j]
+                        pval_val = self.pvalue_matrix.iloc[i, j]
+                        if not np.isnan(syn_val):
+                            rows.append({
+                                "Feature1": f1,
+                                "Feature2": f2,
+                                "Synergy": syn_val,
+                                "P-value": pval_val
+                            })
+            df_long = pd.DataFrame(rows)
+            if output_file.endswith(".csv"):
+                df_long.to_csv(output_file, index=False)
+            else:
+                df_long.to_excel(output_file, index=False)
+   
     
     def filter_weak_synergy(
             self, 
@@ -279,6 +278,9 @@ class PairwiseSynergyAnalyzer:
                 - Synergy score matrix with weak synergy pairs removed (set as NaN).
                 - Corresponding p-value matrix with the same filtering applied.
         """
+        if not hasattr(self, 'pvalue_matrix'):
+            raise RuntimeError("Synergy matrix not found. Please run `compute_synergy_matrix()` first.")
+        
         synergy_matrix, p_value = self.synergy_matrix.copy(), self.pvalue_matrix.copy()
 
         # Mask weak synergy values
@@ -298,8 +300,8 @@ class PairwiseSynergyAnalyzer:
     def plot_synergy_heatmap(
             self, 
             lower_bound: float = 0.1,
-            significance_threshold : float=0.05,
-            target_name: str = ""
+            target_name: str = "",
+            output_file=None
         ) -> None:
         """
         Plot a heatmap of synergy scores with red boxes around significant pairs.
@@ -307,59 +309,101 @@ class PairwiseSynergyAnalyzer:
         Args:
         lower_bound (float): (default: 0.1)
             Minimum synergy value to keep in the heatmap.
-        significance_threshold (float): (default: 0.05)
-            Significance threshold for p-values.
         target_name (str): (default: "")
             Name of the target variable for the plot title.
+        output_file (str or None): 
+            If provided, saves the plot to an HTML file.
         """
         synergy_matrix, pvalue_matrix = self.filter_weak_synergy(lower_bound=lower_bound)
 
         if synergy_matrix.empty or np.isnan(synergy_matrix.values).all():
             raise ValueError("No sufficient synergy pairs to plot. Try adjusting the lower_bound parameter.")
 
-        num_rows, num_cols = synergy_matrix.shape
-        cell_size = 0.6
-        min_figsize = (4, 3)
+        n_rows, n_cols = synergy_matrix.shape
+        cell_size = 60  # Base pixel size per cell
 
-        figsize = (max(cell_size * num_cols, min_figsize[0])*1.1, 
-                max(cell_size * num_rows, min_figsize[1]))
+        max_dim = max(n_rows, n_cols)
+        fig_size = min(1200, max_dim * cell_size)  # Cap total figure size to avoid excessive width
 
-        cell_width = figsize[0] / max(num_cols, 1)
-        cell_height = figsize[1] / max(num_rows, 1)
-        base_fontsize = min(cell_width, cell_height) * 18
-        annot_fontsize = base_fontsize * 0.8
+        title_fontsize = max(14 + max_dim // 2, 28)
+        label_fontsize = max(8, 12 - max_dim // 8)
+        annot_fontsize = max(6, 12 - max_dim // 8)
 
-        nan_mask = synergy_matrix.isna()
-        cmap = plt.get_cmap("managua").copy()
-        cmap.set_bad(color='#F5F5F5')
-
-        plt.figure(figsize=figsize, dpi=150)
-        ax = sns.heatmap(
-            synergy_matrix,
-            annot=True, 
-            fmt=".2f", 
-            cmap=cmap, 
-            center=0, 
-            square=True,
-            linewidths=0.5,
-            linecolor="gray", 
-            cbar_kws={"shrink": 0.8,"label": "Corrected Synergy"},
-            mask=nan_mask,
-            annot_kws={"size": annot_fontsize}
+        # --- Prepare matrix and annotations ---
+        display_matrix = synergy_matrix.fillna(0)
+        text_matrix = np.where(
+            np.isnan(synergy_matrix.values),
+            "",
+            synergy_matrix.round(2).astype(str)
         )
 
-        ax.set_xticks(np.arange(synergy_matrix.shape[1]) + 0.5)
-        ax.set_yticks(np.arange(synergy_matrix.shape[0]) + 0.5)
-        ax.set_xticklabels(synergy_matrix.columns, rotation=90, fontsize=base_fontsize)
-        ax.set_yticklabels(synergy_matrix.index, rotation=0, fontsize=base_fontsize)
+        # --- Generate custom hover text per cell ---
+        valid_mask = ~np.isnan(synergy_matrix.values)
+        hover_text = np.empty_like(synergy_matrix, dtype=object)
+        hover_text[valid_mask] = [
+            f"<b>X</b>: {col}<br><b>Y</b>: {row}<br>"
+            f"<b>Corr</b>: {coef:.2f}<br><b>p-val</b>: {pval:.6f}"
+            for row, col, coef, pval in zip(
+                np.repeat(synergy_matrix.index, n_cols)[valid_mask.ravel()],
+                np.tile(synergy_matrix.columns, n_rows)[valid_mask.ravel()],
+                synergy_matrix.values[valid_mask],
+                pvalue_matrix.values[valid_mask]
+            )
+        ]
+        hover_text[~valid_mask] = ""
+     
+        # --- Create heatmap figure ---
+        fig = go.Figure(
+            go.Heatmap(
+                z=display_matrix.values,
+                x=synergy_matrix.columns,
+                y=synergy_matrix.index,
+                colorscale='Blues',
+                zmid=0,
+                text=text_matrix,
+                texttemplate=f"<span style='font-size:{annot_fontsize}px'>%{{text}}</span>",
+                hovertext=hover_text,
+                hoverinfo="text",
+                colorbar=dict(title="Synergy", len=0.8, thickness=title_fontsize),
+                zmin=0,
+                zmax=np.nanmax(display_matrix.values),
+                xgap=1,
+                ygap=1,
+                )
+            )
 
-        # Add red boxes for significant pairs (p < alpha)
-        for i in range(num_rows):
-            for j in range(num_rows):
-                if i < j and pvalue_matrix.iloc[i, j] < significance_threshold:
-                    ax.add_patch(Rectangle((j, i), 1, 1, fill=False, edgecolor='red', lw=2))
-                    ax.add_patch(Rectangle((i, j), 1, 1, fill=False, edgecolor='red', lw=2))
+        # --- Adjust layout ---
+        max_ylabel_len = max(len(str(lbl)) for lbl in synergy_matrix.index)
+        left_margin = 60 + max_ylabel_len * label_fontsize
 
-        plt.title(f"Pairwise Synergy Heatmap based on {target_name} \n(Significant values p < {significance_threshold} highlighted)")
-        plt.tight_layout()
-        plt.show()
+        fig.update_layout(
+            title=dict(
+                text=f"<b>Pairwise Synergy Heatmap of HPO Features</b><br>"
+                    f"<span style='font-size:0.8em'>With respect to {target_name}</span>",
+                x=0.5,
+                xanchor="center",
+                yanchor="top",
+                font=dict(
+                    size=min(title_fontsize, 24),
+                    family="Arial"
+                )
+            ),
+            xaxis=dict(
+                tickangle=90,
+                tickfont=dict(size=label_fontsize),
+            ),
+            yaxis=dict(
+                tickfont=dict(size=label_fontsize),
+                scaleanchor="x",
+                scaleratio=1
+            ),
+            width=fig_size + left_margin,
+            height=fig_size + left_margin,
+            plot_bgcolor="rgba(240,240,240,0.1)"
+        )
+
+        # --- Save or show plot ---
+        if output_file:
+            fig.write_html(output_file)
+
+        fig.show()
