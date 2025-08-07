@@ -8,5 +8,5 @@ from ._utils import HPOHierarchyUtils
 __all__ = [
     "PhenopacketMatrixGenerator",
     "PhenopacketMatrixProcessor",
-    "HHPOHierarchyUtils"
+    "HPOHierarchyUtils"
 ]

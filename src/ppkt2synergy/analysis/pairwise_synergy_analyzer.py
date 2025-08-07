@@ -4,6 +4,8 @@ import numpy as np
 import pandas as pd
 from typing import Tuple, Union, Optional
 import plotly.graph_objs as go
+import logging
+logger = logging.getLogger(__name__)
 
 class PairwiseSynergyAnalyzer:
     """
@@ -84,15 +86,16 @@ class PairwiseSynergyAnalyzer:
         if relationship_mask is not None:
             if isinstance(relationship_mask, pd.DataFrame):
                 relationship_mask_numpy = relationship_mask.to_numpy() 
-            elif isinstance(relationship_mask, np.ndarray):
-                relationship_mask_numpy = relationship_mask
             else:
-                raise ValueError("mask must be a pd.DataFrame or np.ndarray")
+                raise ValueError("mask must be a pd.DataFrame.")
+            
             if relationship_mask_numpy.shape[0] != relationship_mask_numpy.shape[1] or \
                 relationship_mask_numpy.shape[0] != hpo_matrix.shape[1]:
                 raise ValueError("mask must have the same number of rows and columns as hpo_matrix has features")
+            
             if not np.all(np.isin(relationship_mask_numpy[~np.isnan(relationship_mask_numpy)], [0])):
                 raise ValueError("relationship_mask must contain only 0 or NaN")
+            
             self.synergy_matrix = relationship_mask_numpy
         else:
             self.synergy_matrix = np.full((self.n_features, self.n_features), np.nan)
@@ -227,7 +230,7 @@ class PairwiseSynergyAnalyzer:
         valid_mask = ~((np.isnan(self.synergy_matrix).all(axis=0)) | (np.nan_to_num(self.synergy_matrix, nan=0).sum(axis=0) == 0))
         valid_hpo_terms = self.hpo_terms[valid_mask]
         if len(valid_hpo_terms) == 0:
-            print("Warning: No valid synergy between HPO terms. Synergy matrix will be empty.")
+            logger.warning("Warning: No valid synergy between HPO terms. Synergy matrix will be empty.")
 
         self.synergy_matrix = pd.DataFrame(
             self.synergy_matrix[np.ix_(valid_mask, valid_mask)],

@@ -33,7 +33,7 @@ class PhenopacketMatrixProcessor:
     @staticmethod
     def prepare_hpo_data(
             phenopackets: List[ppkt.Phenopacket], 
-            hpo_file: Union[IO, str] = None,
+            hpo_file: Optional[Union[IO, str]] = None,
             variant_effect_type: Optional[VariantEffect] = None,
             mane_tx_id: Optional[Union[str, List[str]]] = None,
             external_target_matrix: Optional[pd.DataFrame] = None, 
@@ -72,7 +72,7 @@ class PhenopacketMatrixProcessor:
                 - 'root': keeps the most general terms (i.e., those without ancestors in the selected set). 
                 -  None: keeps all terms.
             use_label (bool): (default: True)
-                Whether to replace term IDs with their labels (if available). 
+                Whether to replace term IDs with their labels. 
             nan_strategy (str, optional): (default: None)
                 Strategy for handling missing values.
                 - "impute_zero": fill NaNs with 0
@@ -100,13 +100,11 @@ class PhenopacketMatrixProcessor:
             raise ValueError(f"Invalid mode: '{mode}'. Choose 'leaf' or 'root' or None.")
         
         classifier = HPOHierarchyUtils(hpo_file)
-
         data_generator = PhenopacketMatrixGenerator(
             phenopackets=phenopackets,
             hpo_file=hpo_file,
             variant_effect_type=variant_effect_type,
             mane_tx_id=mane_tx_id,
-            use_labels=False,
             external_target_matrix=external_target_matrix,
             hpo_hierarchy = classifier) 
         
@@ -134,11 +132,11 @@ class PhenopacketMatrixProcessor:
 
         # Replace term IDs with labels 
         if use_label:
-            final_matrix = PhenopacketMatrixProcessor._apply_hpo_labels(final_matrix, data_generator)
-            target_matrix = PhenopacketMatrixProcessor._apply_hpo_labels(target_matrix, data_generator)
-            relationship_mask = PhenopacketMatrixProcessor._apply_hpo_labels(relationship_mask, data_generator) if mode is None else None
+            final_matrix = PhenopacketMatrixProcessor._apply_labels(final_matrix, data_generator)
+            target_matrix = PhenopacketMatrixProcessor._apply_labels(target_matrix, data_generator)
+            #relationship_mask = PhenopacketMatrixProcessor._apply_labels(relationship_mask, data_generator,label_manager,label_mode=label_mode) if mode is None else None
 
-        return ((final_matrix, relationship_mask  if mode is None else None ), target_matrix) 
+        return ((final_matrix, relationship_mask  if mode is None else None), target_matrix) 
 
 
     @staticmethod
@@ -173,24 +171,28 @@ class PhenopacketMatrixProcessor:
 
 
     @staticmethod
-    def _apply_hpo_labels(
+    def _apply_labels(
             matrix: pd.DataFrame, 
-            data_generator: PhenopacketMatrixGenerator
+            data_generator: PhenopacketMatrixGenerator,
+            classifier: HPOHierarchyUtils,
         ) -> pd.DataFrame:
         """
         Replaces HPO term IDs with corresponding labels (if available).
 
         Args:
             matrix (pd.DataFrame): 
-                The data matrix.
+                A DataFrame where columns are HPO term IDs or target IDs.
             data_generator (PhenopacketMatrixGenerator): 
-                Provides HPO labels.
+                Provides additional target labels defined by the user or data source.
+            classifier (HPOHierarchyUtils): 
+                Provides standard HPO and disease labels via the loaded ontology and phenopackets.
 
         Returns:
             pd.DataFrame: Matrix with IDs replaced by labels.
         """
-        label_mapping = {**data_generator.hpo_labels, **data_generator.target_labels}
-        # Apply the combined mapping
+        hpo_labels, disease_labels = classifier.create_hpo_and_disease_labels()
+
+        label_mapping = {**hpo_labels, **data_generator.target_labels, **disease_labels}
         matrix = matrix.rename(columns=label_mapping)
         return matrix
 

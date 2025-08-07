@@ -1,20 +1,21 @@
-from typing import List, Dict, Set, Union, IO, Optional
-from ..io import load_hpo
+from typing import List, Dict, Set, Union, IO, Optional, Tuple
+from ..io import load_hpo,CohortDataLoader
 import pandas as pd
 import numpy as np
+import logging
+
+logger = logging.getLogger(__name__)
 
 class HPOHierarchyUtils:
     """
-    Utility class for handling HPO term hierarchies.
-    1. Propagates HPO term observations/exclusions in a matrix.
-    2.Identifies root and leaf terms in HPO term subtrees.
-        - Each root is the top-most term in a connected subtree (no ancestors in given set).
-        - If a root has no children, it is considered a leaf itself.
-    
-    Example:
-        >>> utils = HPOHierarchyUtils()
-        >>> matrix_propagated = utils.propagate_hpo_hierarchy(matrix)
-        >>> result = utils.classify_terms({"HP:0004322", "HP:0001250", "HP:0012758"})
+    Utility class for handling hierarchical relationships between HPO terms.
+
+    Main functionalities:
+    1. Propagate observed (1) and excluded (0) HPO term annotations in a sample × HPO matrix,
+    respecting the HPO ontology structure.
+    2. Classify a given set of HPO terms into subtrees rooted at top-level terms.
+    3. Identify hierarchical conflicts in observed/excluded data.
+    4. Provide utility functions for hierarchical masking and term labeling.
         print(result)
         # Output:
         # {
@@ -74,13 +75,13 @@ class HPOHierarchyUtils:
                 try:
                     self._ancestor_cache[term] = {a.value for a in self.hpo.graph.get_ancestors(term)}
                 except Exception as e:
-                    print(f"Warning: failed to get ancestors for term {term}: {e}")
+                    logger.warning(f"Warning: failed to get ancestors for term {term}: {e}")
                     self._ancestor_cache[term] = set()
             if term not in self._descendant_cache:
                 try:
                     self._descendant_cache[term] = {d.value for d in self.hpo.graph.get_descendants(term)}
                 except Exception as e:
-                    print(f"Warning: failed to get descendants for term {term}: {e}")
+                    logger.warning(f"Warning: failed to get descendants for term {term}: {e}")
                     self._descendant_cache[term] = set()
     
 
@@ -229,7 +230,7 @@ class HPOHierarchyUtils:
         """
         Build a term × term mask matrix where each cell is set to NaN if the two terms
         have a hierarchical relationship (i.e., one is an ancestor or descendant of the other),
-        and 1 otherwise.
+        and 0 otherwise.
 
         Args:
             terms (List): A list of HPO term IDs to include in the mask.
@@ -237,18 +238,18 @@ class HPOHierarchyUtils:
         Returns:
             pd.DataFrame: A square DataFrame (terms × terms) where:
                         - cell (i, j) is NaN if term_i and term_j are hierarchically related;
-                        - otherwise, the value is 1.
+                        - otherwise, the value is 0.
         """
-        terms = set(terms)
+        terms = list(terms)
         # Initialize a matrix filled with 0s; it will be updated to 1 or NaN later.
-        mask = pd.DataFrame(0, index=list(terms), columns=list(terms), dtype=float)
+        mask = pd.DataFrame(0, index=terms, columns=terms, dtype=float)
 
         # Ensure ancestor and descendant relationships are cached for these terms
         self._cache_term_relations(terms)
 
         nan_positions = set()
         for term in terms:
-            related = (self._ancestor_cache[term] | self._descendant_cache[term]) & terms
+            related = (self._ancestor_cache[term] | self._descendant_cache[term]) & set(terms)
             nan_positions.update({(term, rel) for rel in related})
             nan_positions.update({(rel, term) for rel in related})
             nan_positions.add((term, term))
@@ -257,9 +258,48 @@ class HPOHierarchyUtils:
             mask.loc[r, c] = np.nan
 
         return mask
-
     
 
+    def create_hpo_and_disease_labels(
+            self,
+        ) -> Tuple[Dict[str, str], Dict[str, str]]:
+        """
+        Build up-to-date HPO and disease label mappings from phenopackets using the latest HPO ontology.
+
+        Returns:
+            A tuple of two dictionaries:
+                - hpo_labels: A dictionary mapping HPO IDs to term labels.
+                - disease_labels: A dictionary mapping disease IDs to disease names (from phenopackets).
+        """
+        all_phenopackets = CohortDataLoader.from_ppkt_store()
+
+        hpo_labels = {}
+        disease_labels = {}
+
+        for ppkt in all_phenopackets:
+            for feature in ppkt.phenotypic_features:
+                if feature.type and feature.type.id:
+                    hpo_id = feature.type.id
+                    term_name = self.hpo.get_term_name(hpo_id)
+                    if term_name:
+                        hpo_labels[hpo_id] = term_name
+                    else:
+                        logger.warning(f"HPO term not found in ontology: {hpo_id} — using ID as label")
+                        hpo_labels[hpo_id] = hpo_id  # fallback to ID
+
+            for disease in ppkt.diseases:
+                if disease.term and disease.term.id:
+                    disease_id = disease.term.id
+                    label = disease.term.label or disease_id
+                    if disease.term.label is None:
+                        logger.warning(f"Disease label missing for: {disease_id} — using ID as label")
+                    disease_labels[disease_id] = label
+
+        return hpo_labels, disease_labels
+
+
+
+   
 
 
     

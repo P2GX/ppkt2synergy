@@ -6,6 +6,8 @@ from gpsea.analysis.clf import monoallelic_classifier
 from gpsea.model import VariantEffect
 from gpsea.analysis.predicate import variant_effect, anyof
 from ._utils import HPOHierarchyUtils
+import logging
+logger = logging.getLogger(__name__)
 
 class PhenopacketMatrixGenerator:
     """
@@ -27,7 +29,6 @@ class PhenopacketMatrixGenerator:
             self, 
             phenopackets: List[ppkt.Phenopacket], 
             hpo_file: Optional[Union[IO, str]] = None,
-            use_labels: bool = False,
             variant_effect_type: Optional[VariantEffect] = None,
             mane_tx_id: Optional[Union[str, List[str]]] = None,
             external_target_matrix: Optional[pd.DataFrame] = None,
@@ -38,9 +39,7 @@ class PhenopacketMatrixGenerator:
             phenopackets (List[Phenopacket]): 
                 A list of Phenopacket instances.
             hpo_file (str or IO, optional): (default: None)
-                Path to an HPO ontology file. Loads the latest version if None.
-            use_labels (bool): (default: False)
-                If True, replaces HPO IDs and targets column names with human-readable labels in the output matrix. 
+                Path to an HPO ontology file. Loads the latest version if None. 
             variant_effect_type (Optional[str]): (default: None)
                 The specific variant effect class to evaluate.
                 This should be a member of the `VariantEffect` Enum from `gpsea.model`, for example, `VariantEffect.MISSENSE_VARIANT` or `VariantEffect.NONSENSE_VARIANT`. 
@@ -62,20 +61,18 @@ class PhenopacketMatrixGenerator:
         self.phenopackets = phenopackets
         self.variant_effect_type = variant_effect_type
         self.mane_tx_id = mane_tx_id
-        self.use_labels = use_labels
         self.external_target_matrix = external_target_matrix
         self.patient_index = pd.Index([p.id for p in phenopackets], name="patient_id")
         if not isinstance(hpo_hierarchy, HPOHierarchyUtils):
             self.hpo_hierarchy = HPOHierarchyUtils(hpo_file=hpo_file)
         else:
             self.hpo_hierarchy = hpo_hierarchy
-        self.hpo_term_observation_matrix, self.hpo_labels = self._generate_hpo_term_status_matrix(use_labels=use_labels, propagate_hierarchy=False)
+        self.hpo_term_observation_matrix = self._generate_hpo_term_status_matrix()
         self.target_matrix, self.target_labels = self._compute_target()
 
 
     def _generate_hpo_term_status_matrix(
             self, 
-            use_labels: bool = False,
             propagate_hierarchy: bool = True,
         ) -> Tuple[pd.DataFrame, Dict[str, str]]:
         """
@@ -94,8 +91,6 @@ class PhenopacketMatrixGenerator:
         - Excluded terms (0) propagate to all descendants
 
         Args:
-            use_labels (bool): (default: False)
-                If True, replaces HPO IDs with human-readable labels. 
             propagate_hierarchy (bool): (default: True)
                 If True, applies hierarchical propagation. 
 
@@ -106,16 +101,14 @@ class PhenopacketMatrixGenerator:
         """
         return self._generate_status_matrix(
             feature_extractor=lambda ppkt: [
-                (f.type.id, f.type.label, 0 if f.excluded else 1) for f in ppkt.phenotypic_features
+                (f.type.id, 0 if f.excluded else 1) for f in ppkt.phenotypic_features
             ],
             propagate_hierarchy=propagate_hierarchy,
-            use_labels=use_labels
         )
 
 
     def _generate_disease_status_matrix(
             self, 
-            use_labels: bool = False
         ) -> Tuple[pd.DataFrame, Dict[str, str]]:
         """
         Constructs a binary matrix indicating whether each patient has been diagnosed with specific diseases.
@@ -127,10 +120,6 @@ class PhenopacketMatrixGenerator:
             - 1 → Patient has been diagnosed with this disease
             - 0 → No diagnosis recorded (default)
 
-        Args:
-            use_labels (bool): (default: False)
-                If True, replaces disease IDs with their corresponding labels. 
-
         Returns:
             Tuple[pd.DataFrame, Dict[str, str]]: 
                 - Binary matrix of disease statuses
@@ -138,10 +127,9 @@ class PhenopacketMatrixGenerator:
         """
         return self._generate_status_matrix(
             feature_extractor=lambda ppkt: [
-                (f.term.id, f.term.label, 0 if f.excluded else 1) for f in ppkt.diseases
+                (f.term.id, 0 if f.excluded else 1) for f in ppkt.diseases
             ],
             propagate_hierarchy=False,
-            use_labels=use_labels
         )
 
 
@@ -149,7 +137,6 @@ class PhenopacketMatrixGenerator:
             self, 
             feature_extractor: Callable, 
             propagate_hierarchy: bool, 
-            use_labels: bool
         ) -> Tuple[pd.DataFrame, Dict[str, str]]:
         """
         Internal method to generate a binary matrix from any phenopacket feature set (e.g., HPO terms, diseases).
@@ -159,21 +146,18 @@ class PhenopacketMatrixGenerator:
                 Function that extracts (id, label, value) tuples from each phenopacket.
             propagate_hierarchy (bool): 
                 If True, applies hierarchical propagation (only relevant for HPO).
-            use_labels (bool): 
-                If True, replaces feature IDs with human-readable labels.
 
         Returns:
             Tuple[pd.DataFrame, Dict[str, str]]: 
                 - Binary status matrix
                 - A mapping from feature IDs to their labels
         """
-        feature_ids, feature_labels, status_data = set(), {}, {}
+        feature_ids, status_data = set(), {}
 
         for phenopacket in self.phenopackets:
             status_data[phenopacket.id] = {}
-            for f_id, f_label, value in feature_extractor(phenopacket):
+            for f_id, value in feature_extractor(phenopacket):
                 feature_ids.add(f_id)
-                feature_labels[f_id] = f_label
                 status_data[phenopacket.id][f_id] = value
 
         matrix = pd.DataFrame.from_dict(
@@ -184,11 +168,8 @@ class PhenopacketMatrixGenerator:
         
         if propagate_hierarchy:
             matrix = self.hpo_hierarchy.propagate_hpo_hierarchy(matrix)
-        
-        if use_labels:
-            matrix = matrix.rename(columns=feature_labels)
 
-        return matrix, feature_labels
+        return matrix
 
     
     def _generate_sex_matrix(
@@ -272,7 +253,7 @@ class PhenopacketMatrixGenerator:
         )
 
         if variant_effects_matrix[label].sum() == 0:
-            print(f"Warning: The column '{label}' in variant_effects_matrix is all zeros. Please check the corresponding mane_tx_id.")
+            logger.warning(f"Warning: The column '{label}' in variant_effects_matrix is all zeros. Please check the corresponding mane_tx_id.")
     
         return variant_effects_matrix, {label: label}
     
@@ -288,7 +269,7 @@ class PhenopacketMatrixGenerator:
             - Target matrix with disease status, sex, and optional variant effects
             - Mapping from column names to descriptive labels
         """
-        disease_matrix, disease_labels = self._generate_disease_status_matrix(use_labels=self.use_labels)
+        disease_matrix= self._generate_disease_status_matrix()
         disease_matrix =disease_matrix.fillna(0)
         sex_matrix, sex_labels = self._generate_sex_matrix()
 
@@ -298,17 +279,18 @@ class PhenopacketMatrixGenerator:
                 self.variant_effect_type, self.mane_tx_id
             )
 
-        # Collect all available matrices
+        # Collect matrices to combine (note: disease_labels will be added later)
         matrices = [
-            (disease_matrix, disease_labels),
+            (disease_matrix, {}), # disease_labels to be added in the next step
             (sex_matrix, sex_labels),
         ]
         if variant_effects_matrix is not None:
             matrices.append((variant_effects_matrix, variant_labels))
-
+        
+        # Optional: Add external matrix if valid
         if self.external_target_matrix is not None:
             if not isinstance(self.external_target_matrix, pd.DataFrame):
-                print("Warning: external_target_matrix is not a pandas DataFrame. It will be ignored.")
+                logger.warning("Warning: external_target_matrix is not a pandas DataFrame. It will be ignored.")
             else:
                 external_matrix = self.external_target_matrix.reindex(index=self.patient_index)
                 valid_values = {0, 1}
@@ -316,12 +298,13 @@ class PhenopacketMatrixGenerator:
 
                 if invalid_mask.any().any():
                     invalid_entries = external_matrix[invalid_mask].stack()
-                    print(
+                    logger.warning(
                         f"Warning: external_target_matrix contains invalid values (only 0, 1, and NaN are allowed).\n"
                         f"The following invalid entries were found and the matrix will be skipped:\n{invalid_entries}"
                     )
                 else:
                     matrices.append((external_matrix, {col: col for col in external_matrix.columns}))
+        # Combine and return
         combined_matrix = pd.concat([m.reindex(self.patient_index) for m, _ in matrices], axis=1)
         combined_labels = {k: v for _, label_dict in matrices for k, v in label_dict.items()}
 

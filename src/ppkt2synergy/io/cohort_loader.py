@@ -16,15 +16,16 @@ class CohortDataLoader:
 
     @staticmethod
     def from_ppkt_store(
-        cohort_name: Union[str, List[str]],
+        cohort_name: Optional[Union[str, List[str]]]=None,
         ppkt_store_version: Optional[str] = None,
     ) -> List[ppkt.Phenopacket]:
         """
         Load Phenopacket objects for one or more cohorts from the configured Phenopacket Store.
 
         Args:
-            cohort_name (Union[str, List[str]]):  
-                A single cohort name or a list of cohort names to be loaded.  
+            cohort_name (Union[str, List[str], None]):
+                A single cohort name, a list of cohort names, or None.
+                If None, phenopackets from all cohorts in the store will be loaded.  
 
             ppkt_store_version (Optional[str]):  (default: None)
                 A string specifying the release tag of the Phenopacket Store (e.g., `'0.1.23'`).  
@@ -35,11 +36,13 @@ class CohortDataLoader:
         """
         registry = configure_phenopacket_registry()
         with registry.open_phenopacket_store(release=ppkt_store_version) as ps:
-            if isinstance(cohort_name, str):
+            if cohort_name is None:
+                # Load all phenopackets from the store
+                cohort_names = [cohort.name for cohort in ps.cohorts()]  
+            elif isinstance(cohort_name, str):
                 cohort_names = [cohort_name]
             else:
                 cohort_names = cohort_name
-
             phenopackets = []
             for name in cohort_names:
                 phenopackets.extend(list(ps.iter_cohort_phenopackets(name))) 
