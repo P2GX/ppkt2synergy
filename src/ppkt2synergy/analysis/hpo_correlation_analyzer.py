@@ -4,10 +4,8 @@ from typing import Dict, Union, Tuple,Optional
 from joblib import Parallel, delayed
 import scipy.stats
 import plotly.graph_objs as go
-import plotly.express as px
-import matplotlib.pyplot as plt
-from statsmodels.graphics.mosaicplot import mosaic
-
+import logging
+logger = logging.getLogger(__name__)
 
 class HPOStatisticsAnalyzer:
 
@@ -72,14 +70,13 @@ class HPOStatisticsAnalyzer:
             if relationship_mask is not None:
                 if isinstance(relationship_mask, pd.DataFrame):
                     self.relationship_mask = relationship_mask.to_numpy() 
-                elif isinstance(relationship_mask, np.ndarray):
-                    self.relationship_mask = relationship_mask
                 else:
-                    raise ValueError("mask must be a pd.DataFrame or np.ndarray")
+                    raise ValueError("relationship_mask must be a pd.DataFrame")
                     
                 if relationship_mask.shape[0] != relationship_mask.shape[1] or \
                     relationship_mask.shape[0] != hpo_matrix.shape[1]:
-                    raise ValueError("mask must have the same number of rows and columns as hpo_matrix has features")
+                    raise ValueError("relationship_mask must have the same number of rows and columns as hpo_matrix has features")
+                
                 if not np.all(np.isin(self.relationship_mask[~np.isnan(self.relationship_mask)], [0])):
                     raise ValueError("relationship_mask must contain only 0 or NaN")
             
@@ -234,7 +231,7 @@ class HPOStatisticsAnalyzer:
 
         valid_mask = ~(np.isnan(matrix).all(axis=0)) | (np.nan_to_num(matrix, nan=0).sum(axis=0) == 0)
         if len(valid_mask) == 0:
-            print("Warning: No valid correlation between HPO terms. Correlation matrix will be empty.")
+            logger.warning("Warning: No valid correlation between HPO terms. Correlation matrix will be empty.")
         
         filtered_columns = self.hpo_terms[valid_mask]
         self.coef_df = pd.DataFrame(matrix[np.ix_(valid_mask, valid_mask)], index=filtered_columns, columns=filtered_columns)

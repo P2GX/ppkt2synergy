@@ -1,8 +1,8 @@
 import hpotk
-from typing import Union, IO
+from typing import Union, IO,Optional
 
 def load_hpo(
-        file: Union[IO, str] = None
+        file: Optional[Union[IO, str]] = None
     ) -> hpotk.MinimalOntology:
     """
     Loads the HPO ontology from a file or fetches the latest version.
