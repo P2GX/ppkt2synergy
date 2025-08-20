@@ -3,8 +3,10 @@ import pandas as pd
 from typing import Dict, Union, Tuple,Optional
 from joblib import Parallel, delayed
 import scipy.stats
+from .correlation_type import CorrelationType
 import plotly.graph_objs as go
 import logging
+from os import path
 logger = logging.getLogger(__name__)
 
 class HPOStatisticsAnalyzer:
@@ -34,6 +36,7 @@ class HPOStatisticsAnalyzer:
             self,  
             hpo_data: Tuple[pd.DataFrame,Optional[pd.DataFrame]], 
             min_individuals_for_correlation_test: int = 30,
+            min_cooccurrence_count = 1
         ):
             """
             Initialize the HPOStatisticsAnalyzer.
@@ -48,6 +51,12 @@ class HPOStatisticsAnalyzer:
                 If provided, it will be converted to a NumPy array and used to initialize the synergy matrix.
             min_individuals_for_correlation_test(int): (default: 30)
                 Minimum number of valid individuals required to perform correlation tests.
+            min_cooccurrence_count (int, default=1):
+                Minimum number of co-occurrences (both features present, 1/1) 
+                **and** co-exclusions (both features absent, 0/0) required 
+                for a feature pair to be considered valid for correlation testing.
+                This ensures that both positive and negative concordance are observed 
+                more than once, avoiding spurious correlations.
 
             Raises:
                 ValueError: If min_individuals_for_correlation_test is less than 30.
@@ -83,13 +92,13 @@ class HPOStatisticsAnalyzer:
             if min_individuals_for_correlation_test < 30:
                 raise ValueError("min_individuals_for_correlation_test must not be less than 30.")
             self.min_individuals_for_correlation_test = min_individuals_for_correlation_test
-            self._supported_stats = {"spearman", "kendall", "phi"}
+            self.min_coccurrence_count = min_cooccurrence_count
 
     def _calculate_pairwise_stats( 
             self,
             observed_status_A: np.ndarray, 
             observed_status_B: np.ndarray,
-            stats_name: str = "spearman"
+            correlation_type: CorrelationType = CorrelationType.SPEARMAN,
         ) -> Dict[str, Union[float, str]]:
             """
             Calculate selected statistical metric (spearman, kendall, or phi) and its p-value
@@ -100,26 +109,29 @@ class HPOStatisticsAnalyzer:
                     Binary values (0/1) for the first variable.
                 observed_status_B(np.ndarray): 
                     Binary values (0/1) for the second variable.
-                stats_name(str): (default: "spearman")
-                    One of "spearman", "kendall", or "phi".
+                correlation_type (CorrelationType): (default: CorrelationType.SPEARMAN)
+                    Correlation metric to compute. One of:
+                    - CorrelationType.SPEARMAN
+                    - CorrelationType.KENDALL
+                    - CorrelationType.PHI
 
             Returns:
                 Dict[str, Union[float, str]]: 
                     A dictionary with the selected statistic and its p-value.
 
             Raises:
-                ValueError: If the provided stats_name is not supported.
+                ValueError: If the provided correlation_name is not supported.
             """
-            if stats_name == "spearman":
+            if correlation_type == CorrelationType.SPEARMAN:
                 coef, pval = scipy.stats.spearmanr(observed_status_A, observed_status_B)
                 return coef, pval
 
-            elif stats_name == "kendall":
+            elif correlation_type == CorrelationType.KENDALL:
                 coef, pval = scipy.stats.kendalltau(observed_status_A, observed_status_B)
                 return coef, pval
 
-            elif stats_name == "phi":
-                confusion_matrix = confusion_matrix = pd.crosstab(observed_status_A, observed_status_B, dropna=False)
+            elif correlation_type == CorrelationType.PHI:
+                confusion_matrix = pd.crosstab(observed_status_A, observed_status_B, dropna=False)
                 try:
                     chi2, p, _, _ = scipy.stats.chi2_contingency(confusion_matrix)
                     n = confusion_matrix.sum().sum()
@@ -127,14 +139,15 @@ class HPOStatisticsAnalyzer:
                     return phi, p
                 except ValueError:
                     return np.nan, np.nan
+
             else:
-                raise ValueError(f"Unsupported stats_name '{stats_name}'. Choose from 'spearman', 'kendall', 'phi'.")
+                raise ValueError(f"Unsupported CorrelationType '{stats_type}'.")
 
     def _calculate_pairwise_correlation(
             self,
             col_A: int,
             col_B: int, 
-            stats_name: str = "spearman"
+            correlation_type: CorrelationType = CorrelationType.SPEARMAN,
         ) -> Dict[str, Union[float, str]]:
             """
             Perform correlation tests between two columns (HPO terms, diseases).
@@ -144,8 +157,11 @@ class HPOStatisticsAnalyzer:
                     The first column to correlate.
                 col_B(int): 
                     The second column to correlate.
-                stats_name(str): (default: "spearman")
-                    One of "spearman", "kendall", or "phi".
+                correlation_type (CorrelationType): (default: CorrelationType.SPEARMAN)
+                    Correlation metric to compute. One of:
+                    - CorrelationType.SPEARMAN
+                    - CorrelationType.KENDALL
+                    - CorrelationType.PHI
 
             Returns:
                 Optional[Dict[str, Union[float, str]]]:
@@ -160,44 +176,59 @@ class HPOStatisticsAnalyzer:
             mask = (~np.isnan(matrix[:, col_A])) & (~np.isnan(matrix[:, col_B]))
             col_A_values = matrix[mask, col_A]
             col_B_values = matrix[mask, col_B]
+
+            count_11 = np.sum((col_A_values == 1) & (col_B_values == 1))
+            count_10 = np.sum((col_A_values == 1) & (col_B_values == 0))
+            count_01 = np.sum((col_A_values == 0) & (col_B_values == 1))
+            count_00 = np.sum((col_A_values == 0) & (col_B_values == 0))
+            total = len(col_A_values)
                         
             if len(col_A_values) < self.min_individuals_for_correlation_test:
-                return (col_A, col_B, np.nan, np.nan)
+                return (col_A, col_B, np.nan, np.nan, {"00":0,"01":0,"10":0,"11":0,"N":0})
             
             if np.all(col_A_values == col_A_values[0]) or np.all(col_B_values == col_B_values[0]):
-                return (col_A, col_B, np.nan, np.nan)
+                return (col_A, col_B, np.nan, np.nan, {"00":0,"01":0,"10":0,"11":0,"N":0})
+            
+            # --- Count co-occurrence ---
+            observed_observed = np.sum((col_A_values == 1) & (col_B_values == 1))
+            excluded_excluded = np.sum((col_A_values == 0) & (col_B_values == 0))
+
+            if observed_observed <= self.min_coccurrence_count or excluded_excluded <= self.min_coccurrence_count:
+                return (col_A, col_B, np.nan, np.nan, {"00":0,"01":0,"10":0,"11":0,"N":0})
 
             try:
-                coef, p_val = self._calculate_pairwise_stats(col_A_values, col_B_values, stats_name=stats_name)
-                return (col_A, col_B, coef, p_val)
+                coef, p_val = self._calculate_pairwise_stats(col_A_values, col_B_values, correlation_type=correlation_type)
+                return (col_A, col_B, coef, p_val, {"00":count_00,"01":count_01,"10":count_10,"11":count_11,"N":total})
             except Exception as e:
-                return (col_A, col_B, np.nan, np.nan)
+                return (col_A, col_B, np.nan, np.nan, {"00":0,"01":0,"10":0,"11":0,"N":0})
 
     def compute_correlation_matrix(
             self, 
-            stats_name: str = "spearman", 
+            correlation_type: CorrelationType = CorrelationType.SPEARMAN, 
             n_jobs: int = -1,
-            output_file: Optional[str] = None
         ) -> None:
         """
         Compute pairwise correlation and p-value matrices.
 
         Args:
-            stats_name(str): (default: "spearman") 
-                One of "spearman", "kendall", or "phi".
+            correlation_type (CorrelationType): (default: CorrelationType.SPEARMAN)
+                Correlation metric to compute. One of:
+                - CorrelationType.SPEARMAN
+                - CorrelationType.KENDALL
+                - CorrelationType.PHI
             n_jobs(int): (default: -1)
                 Number of parallel jobs to use (-1 uses all cores).
-            output_file (Optional[str]): (default: None)
-                If provided, saves the result to Excel.
         Returns:
-            None: Sets `self.coef_df` and `self.pval_df` with results.
-
-        Returns:
-            Tuple[pd.DataFrame, pd.DataFrame]:
-                correlation matrix, p-value matrix
+            pd.DataFrame:
+                DataFrame with correlation coefficients and p-values
+                - Each row of the exported table contains:
+                    * Feature1 (str): HPO term or feature name.
+                    * Feature2 (str): HPO term or feature name.
+                    * Coefficient (float): correlation coefficient.
+                    * P-value (float): corresponding p-value.
         """
-        if stats_name not in self._supported_stats:
-            raise ValueError(f"Unsupported stats_name '{stats_name}'. Choose from {self._supported_stats}.")
+        if not isinstance(correlation_type, CorrelationType):
+            raise ValueError(f"stats_type must be a CorrelationType, got {type(correlation_type)}")
         
         columns = self.hpo_terms
         n_cols = len(columns)
@@ -206,12 +237,11 @@ class HPOStatisticsAnalyzer:
             if self.relationship_mask is not None:
                 if i < self.n_features and j < self.n_features:
                     if pd.isna(self.relationship_mask[i, j]):
-                        return (i,j, np.nan, np.nan)
+                        return (i,j, np.nan, np.nan, {"00":0,"01":0,"10":0,"11":0,"N":0})
             try:
-                i, j, coef, pval = self._calculate_pairwise_correlation(i, j, stats_name=stats_name)
-                return (i, j, coef, pval)
+                return self._calculate_pairwise_correlation(i, j, correlation_type=correlation_type)
             except Exception:
-                return (i, j, np.nan, np.nan)
+                return (i, j, np.nan, np.nan, {"00":0,"01":0,"10":0,"11":0,"N":0})
 
         results = Parallel(n_jobs=n_jobs)(
             delayed(compute_pair)(i, j)
@@ -221,13 +251,29 @@ class HPOStatisticsAnalyzer:
         matrix = np.full((n_cols, n_cols), np.nan)
         pvalue_matrix = np.full((n_cols, n_cols), np.nan)
 
+        rows = []
         for r in results:
-            i, j, coef, pval = r
+            i, j, coef, pval, counts = r
             matrix[i, j] = coef
             matrix[j, i] = coef
             pvalue_matrix[i, j] = pval
             pvalue_matrix[j, i] = pval
+            f1, f2 = self.hpo_matrix.columns[i], self.hpo_matrix.columns[j]
+            if j > i:  # only upper triangle
+                if not np.isnan(coef):
+                    rows.append({
+                        "Feature1": f1,
+                        "Feature2": f2,
+                        "Coefficient": coef,
+                        "P_value": pval,
+                        "Count_00": counts["00"],
+                        "Count_01": counts["01"],
+                        "Count_10": counts["10"],
+                        "Count_11": counts["11"],
+                        "Total": counts["N"]
+                    }) 
    
+        self.correlation_results = pd.DataFrame(rows)
 
         valid_mask = ~(np.isnan(matrix).all(axis=0)) | (np.nan_to_num(matrix, nan=0).sum(axis=0) == 0)
         if len(valid_mask) == 0:
@@ -237,26 +283,47 @@ class HPOStatisticsAnalyzer:
         self.coef_df = pd.DataFrame(matrix[np.ix_(valid_mask, valid_mask)], index=filtered_columns, columns=filtered_columns)
         self.pval_df = pd.DataFrame(pvalue_matrix[np.ix_(valid_mask, valid_mask)], index=filtered_columns, columns=filtered_columns)
 
-        if output_file is not None:
-            rows = []
-            for i, f1 in enumerate(self.coef_df.index):
-                for j, f2 in enumerate(self.coef_df.columns):
-                    if j > i:  # only upper triangle
-                        coef_val = self.coef_df.iloc[i, j]
-                        pval_val = self.pval_df.iloc[i, j]
-                        if not np.isnan(coef_val):
-                            rows.append({
-                                "Feature1": f1,
-                                "Feature2": f2,
-                                "Coefficient": coef_val,
-                                "P-value": pval_val
-                            })
+        return self.correlation_results
+    
+    def save_correlation_results(
+            self, 
+            output_file: str
+        ) -> None:
+        """
+        Export the computed correlation results to a file.
 
-            df_long = pd.DataFrame(rows)
-            if output_file.endswith(".csv"):
-                df_long.to_csv(output_file, index=False)
-            else:
-                df_long.to_excel(output_file, index=False)
+        The correlation matrices (`self.coef_df` and `self.pval_df`) must have 
+        been computed previously by calling `compute_correlation_matrix`.
+
+        Args:
+            output_file (str):
+                Path to the output file. Supported formats:
+                - ".csv": saves as a CSV file.
+                - ".xlsx" or other extensions: saves as an Excel file.
+
+        Raises:
+            ValueError:
+                If `self.correlation_results` has not been initialized
+                (i.e., `compute_correlation_matrix` has not been run).
+
+        Example:
+            >>> analyzer.compute_correlation_matrix()
+            >>> analyzer.save_correlation_results("correlations.csv")
+            >>> analyzer.save_correlation_results("correlations.xlsx")
+        """
+        
+        if not hasattr(self, "correlation_results"):
+            raise ValueError("Correlation results not computed. Run compute_correlation_matrix() first.")
+        
+        ext = path.splitext(output_file)[1].lower()
+        if ext not in [".csv", ".xlsx"]:
+            raise ValueError(f"Unsupported file format: {ext}. Use '.csv' or '.xlsx'.")
+
+        
+        if output_file.endswith(".csv"):
+            self.correlation_results.to_csv(output_file, index=False)
+        else:
+            self.correlation_results.to_excel(output_file, index=False)    
 
     
     def filter_weak_correlations(
@@ -303,119 +370,188 @@ class HPOStatisticsAnalyzer:
             lower_bound: float = -0.55,
             upper_bound: float = 0.55,
             title_name: str = "",
-            output_file=None
-        ) -> None:
-            """
-            Plot an interactive Plotly heatmap showing correlation coefficients between features,
-            with red boxes indicating statistically significant correlations (based on p-values).
+        ) -> go.Figure:
+        """
+        Create an interactive Plotly heatmap showing correlation coefficients between features,
+        with hover information for p-values.
 
-            Parameters:
-                stats_name (str): 
-                    Type of correlation coefficient to use ("spearman", "pearson", etc.).
-                lower_bound (float): 
-                    Lower threshold to filter out weak correlations.
-                upper_bound (float): 
-                    Upper threshold to filter out weak correlations.
-                title_name (str): 
-                    Optional subtitle to display under the main title.
-                output_file (str or None): 
-                    If provided, saves the plot to an HTML file.
-            """
-            # --- Compute correlation and filter weak correlations ---
-            coef_matrix, pval_matrix = self.filter_weak_correlations(
-                lower_bound=lower_bound,
-                upper_bound=upper_bound
-            )
+        Parameters:
+            stats_name (str): 
+                Type of correlation coefficient to use ("spearman", "kendall", "phi").
+            lower_bound (float): 
+                Lower threshold to filter out weak correlations.
+            upper_bound (float): 
+                Upper threshold to filter out weak correlations.
+            title_name (str): 
+                Optional subtitle to display under the main title.
 
-            if coef_matrix.empty or np.isnan(coef_matrix.values).all():
-                raise ValueError("Coefficient matrix is empty. Try adjusting the lower_bound parameter.")
+        Returns:
+            plotly.graph_objects.Figure:
+                A Plotly Figure object for the correlation heatmap.
 
-            # --- Dynamic layout scaling based on matrix size ---
-            n_rows, n_cols = coef_matrix.shape
-            cell_size = 60  # Base pixel size per cell
+        Example:
+            >>> # Compute correlations first
+            >>> analyzer.compute_correlation_matrix()
+            >>> # Generate heatmap (returns a Plotly Figure)
+            >>> fig = analyzer.plot_correlation_heatmap_with_significance(
+            ...     stats_name="spearman",
+            ...     lower_bound=-0.5,
+            ...     upper_bound=0.5,
+            ...     title_name="Cohort A"
+            ... )
+            >>> # Show in Jupyter or browser
+            >>> fig.show()
+        """
+        # --- Compute correlation and filter weak correlations ---
+        coef_matrix, pval_matrix = self.filter_weak_correlations(
+            lower_bound=lower_bound,
+            upper_bound=upper_bound
+        )
 
-            max_dim = max(n_rows, n_cols)
-            fig_size = min(1200, max_dim * cell_size)  # Cap total figure size to avoid excessive width
+        if coef_matrix.empty or np.isnan(coef_matrix.values).all():
+            raise ValueError("Coefficient matrix is empty. Try adjusting the lower_bound parameter.")
 
-            title_fontsize = max(14 + max_dim // 2, 28)
-            label_fontsize = max(8, 12 - max_dim // 8)
-            annot_fontsize = max(6, 12 - max_dim // 8)
+        # --- Dynamic layout scaling based on matrix size ---
+        n_rows, n_cols = coef_matrix.shape
+        cell_size = 60  # Base pixel size per cell
 
-            # --- Prepare matrix and annotations ---
-            display_matrix = coef_matrix.fillna(0)
-            text_matrix = np.where(
-                np.isnan(coef_matrix.values),
-                "",
-                coef_matrix.round(2).astype(str)
-            )
+        max_dim = max(n_rows, n_cols)
+        fig_size = min(1200, max_dim * cell_size)  # Cap total figure size to avoid excessive width
 
-            # --- Generate custom hover text per cell ---
-            valid_mask = ~np.isnan(coef_matrix.values)
-            hover_text = np.empty_like(coef_matrix, dtype=object)
-            hover_text[valid_mask] = [
-                f"<b>X</b>: {col}<br><b>Y</b>: {row}<br>"
-                f"<b>Corr</b>: {coef:.2f}<br><b>p-val</b>: {pval:.6f}"
-                for row, col, coef, pval in zip(
-                    np.repeat(coef_matrix.index, n_cols)[valid_mask.ravel()],
-                    np.tile(coef_matrix.columns, n_rows)[valid_mask.ravel()],
-                    coef_matrix.values[valid_mask],
-                    pval_matrix.values[valid_mask]
-                )
-            ]
-            hover_text[~valid_mask] = ""
+        title_fontsize = max(14 + max_dim // 2, 28)
+        label_fontsize = max(8, 12 - max_dim // 8)
+        annot_fontsize = max(6, 12 - max_dim // 8)
 
-            # --- Create heatmap figure ---
-            fig = go.Figure(
-                go.Heatmap(
-                    z=display_matrix.values,
-                    x=coef_matrix.columns,
-                    y=coef_matrix.index,
-                    colorscale="RdBu",
-                    zmid=0,
-                    text=text_matrix,
-                    texttemplate=f"<span style='font-size:{annot_fontsize}px'>%{{text}}</span>",
-                    hovertext=hover_text,
-                    hoverinfo="text",
-                    colorbar=dict(title="Corr.", len=0.8, thickness=title_fontsize),
-                    zmin=-1,
-                    zmax=1,
-                    xgap=1,
-                    ygap=1,
-                )
-            )
+        # --- Prepare matrix and annotations ---
+        display_matrix = coef_matrix.fillna(0)
+        text_matrix = np.where(
+            np.isnan(coef_matrix.values),
+            "",
+            coef_matrix.round(2).astype(str)
+        )
 
-            # --- Adjust layout ---
-            max_ylabel_len = max(len(str(lbl)) for lbl in coef_matrix.index)
-            left_margin = 60 + max_ylabel_len * label_fontsize
+        # --- Generate custom hover text per cell ---
+        hover_text = np.empty_like(coef_matrix, dtype=object)
+        counts_lookup = {}
+        for row in self.correlation_results.itertuples():
+            # forward (original counts)
+            counts_lookup[(row.Feature1, row.Feature2)] = {
+                "Coefficient": row.Coefficient,
+                "P_value": row.P_value,
+                "Count_00": row.Count_00,
+                "Count_01": row.Count_01,
+                "Count_10": row.Count_10,
+                "Count_11": row.Count_11,
+                "Total": row.Total,
+            }
+            # backward (exchange Count_01 和 Count_10)
+            counts_lookup[(row.Feature2, row.Feature1)] = {
+                "Coefficient": row.Coefficient,
+                "P_value": row.P_value,
+                "Count_00": row.Count_00,
+                "Count_01": row.Count_10,  # swapped
+                "Count_10": row.Count_01,  # swapped
+                "Count_11": row.Count_11,
+                "Total": row.Total,
+            }
 
-            fig.update_layout(
-                title=dict(
-                    text=f"<b>{stats_name.capitalize()} Correlation</b><br>"
-                        f"<span style='font-size:0.8em'>{title_name}</span>",
-                    x=0.5,
-                    xanchor="center",
-                    yanchor="top",
-                    font=dict(
-                        size=min(title_fontsize, 24),
-                        family="Arial"
+
+        hover_text = []
+        for i, row in enumerate(coef_matrix.index):
+            hover_row = []
+            for j, col in enumerate(coef_matrix.columns):
+                coef = coef_matrix.iloc[i, j]
+                pval = pval_matrix.iloc[i, j]
+                if np.isnan(coef):
+                    hover_row.append("")
+                else:
+                    counts = counts_lookup.get((row, col), {})
+                    hover_row.append(
+                        f"<b>X</b>: {col}<br><b>Y</b>: {row}<br>"
+                        f"<b>Corr</b>: {coef:.2f}<br><b>p-val</b>: {pval:.6f}<br>"
+                        f"<b>Counts</b>: 00={counts.get('Count_00', 0)}, "
+                        f"01={counts.get('Count_01', 0)}, "
+                        f"10={counts.get('Count_10', 0)}, "
+                        f"11={counts.get('Count_11', 0)}<br>"
+                        f"<b>Total</b>: {counts.get('Total', 0)}"
                     )
-                ),
-                xaxis=dict(
-                    tickangle=90,
-                    tickfont=dict(size=label_fontsize),
-                ),
-                yaxis=dict(
-                    tickfont=dict(size=label_fontsize),
-                    scaleanchor="x",
-                    scaleratio=1
-                ),
-                width=fig_size + left_margin,
-                height=fig_size + left_margin,
-                plot_bgcolor="rgba(240,240,240,0.1)"
+            hover_text.append(hover_row)
+          
+
+        # --- Create heatmap figure ---
+        fig = go.Figure(
+            go.Heatmap(
+                z=display_matrix.values,
+                x=coef_matrix.columns,
+                y=coef_matrix.index,
+                colorscale="RdBu",
+                zmid=0,
+                text=text_matrix,
+                texttemplate=f"<span style='font-size:{annot_fontsize}px'>%{{text}}</span>",
+                hovertext=hover_text,
+                hoverinfo="text",
+                colorbar=dict(title="Corr.", len=0.8, thickness=title_fontsize),
+                zmin=-1,
+                zmax=1,
+                xgap=1,
+                ygap=1,
             )
+        )
 
-            # --- Save or show plot ---
-            if output_file:
-                fig.write_html(output_file)
+        # --- Adjust layout ---
+        max_ylabel_len = max(len(str(lbl)) for lbl in coef_matrix.index)
+        left_margin = 60 + max_ylabel_len * label_fontsize
 
-            fig.show()
+        fig.update_layout(
+            title=dict(
+                text=f"<b>{stats_name.capitalize()} Correlation</b><br>"
+                    f"<span style='font-size:0.8em'>{title_name}</span>",
+                x=0.5,
+                xanchor="center",
+                yanchor="top",
+                font=dict(
+                    size=min(title_fontsize, 24),
+                    family="Arial"
+                )
+            ),
+            xaxis=dict(
+                tickangle=90,
+                tickfont=dict(size=label_fontsize),
+            ),
+            yaxis=dict(
+                tickfont=dict(size=label_fontsize),
+                scaleanchor="x",
+                scaleratio=1
+            ),
+            width=fig_size + left_margin,
+            height=fig_size + left_margin,
+            plot_bgcolor="rgba(240,240,240,0.1)"
+        )
+        return fig
+    
+
+    def save_correlation_heatmap(
+            self, 
+            fig: go.Figure, 
+            output_file: str
+        ) -> None:
+        """
+        Save a correlation heatmap figure to an HTML file.
+
+        Args:
+            fig (plotly.graph_objects.Figure): 
+                The heatmap figure generated by `plot_correlation_heatmap_with_significance`.
+            output_file (str): 
+                Path to the HTML file where the figure should be saved. Must end with '.html'.
+
+        Raises:
+            ValueError:
+                If the output_file extension is not '.html'.
+
+        Example:
+            >>> fig = analyzer.plot_correlation_heatmap_with_significance()
+            >>> analyzer.save_correlation_heatmap(fig, "correlation_heatmap.html")
+        """
+        if not output_file.endswith(".html"):
+            raise ValueError("output_file must have a '.html' extension")
+        fig.write_html(output_file)
