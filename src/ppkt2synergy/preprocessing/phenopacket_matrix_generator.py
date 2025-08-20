@@ -204,8 +204,8 @@ class PhenopacketMatrixGenerator:
 
     def _process_variant_effects(
             self,
-            variant_effect_type: Optional[VariantEffect],
-            mane_tx_id: Optional[Union[str, List[str]]]
+            variant_effect_type: VariantEffect,
+            mane_tx_id: Union[str, List[str]]
         ) -> Tuple[pd.DataFrame, Dict[str, str]]:
 
         """

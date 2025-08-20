@@ -38,9 +38,9 @@ class PhenopacketMatrixProcessor:
             mane_tx_id: Optional[Union[str, List[str]]] = None,
             external_target_matrix: Optional[pd.DataFrame] = None, 
             threshold: float = 0.5, 
-            mode: str = None,
+            mode: Optional[str] = None,
             use_label: bool = True,
-            nan_strategy=None,
+            nan_strategy: Optional[str] = None,
         ) -> Tuple[Tuple[pd.DataFrame,Optional[pd.DataFrame]], pd.DataFrame]:
         """
         Prepare and filter an HPO term matrix and a target matrix from a list of phenopackets.
@@ -132,9 +132,9 @@ class PhenopacketMatrixProcessor:
 
         # Replace term IDs with labels 
         if use_label:
-            final_matrix = PhenopacketMatrixProcessor._apply_labels(final_matrix, data_generator)
-            target_matrix = PhenopacketMatrixProcessor._apply_labels(target_matrix, data_generator)
-            #relationship_mask = PhenopacketMatrixProcessor._apply_labels(relationship_mask, data_generator,label_manager,label_mode=label_mode) if mode is None else None
+            final_matrix = PhenopacketMatrixProcessor._apply_labels(final_matrix, data_generator, classifier)
+            target_matrix = PhenopacketMatrixProcessor._apply_labels(target_matrix, data_generator, classifier)
+            #relationship_mask = PhenopacketMatrixProcessor._apply_labels(relationship_mask, data_generator,, classifier) if mode is None else None
 
         return ((final_matrix, relationship_mask  if mode is None else None), target_matrix) 
 

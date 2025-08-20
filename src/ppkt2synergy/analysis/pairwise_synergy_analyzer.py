@@ -5,6 +5,7 @@ import pandas as pd
 from typing import Tuple, Union, Optional
 import plotly.graph_objs as go
 import logging
+import os
 logger = logging.getLogger(__name__)
 
 class PairwiseSynergyAnalyzer:
@@ -162,15 +163,35 @@ class PairwiseSynergyAnalyzer:
         xi = self.X[mask, i]
         xj = self.X[mask, j]
         y = self.y[mask]
+        total = len(xi)
 
+        
         if len(y) < self.min_individuals_for_synergy_caculation: 
-            return i, j, np.nan, np.nan
+            return i, j, np.nan, np.nan, {}
 
         if np.all(xi == xi[0]) or np.all(xj == xj[0]) or np.all(y == y[0]):
-            return i, j, np.nan, np.nan
+            return i, j, np.nan, np.nan, {}
         
         if np.array_equal(xi, xj):
-            return i, j, 0.0, 1.0
+            return i, j, np.nan, np.nan, {}
+        
+        counts = {
+        # y=0 
+        "00|y=0": np.sum((xi == 0) & (xj == 0) & (y == 0)),
+        "01|y=0": np.sum((xi == 0) & (xj == 1) & (y == 0)),
+        "10|y=0": np.sum((xi == 1) & (xj == 0) & (y == 0)),
+        "11|y=0": np.sum((xi == 1) & (xj == 1) & (y == 0)),
+        "N_y0": np.sum(y == 0),
+
+        # y=1 
+        "00|y=1": np.sum((xi == 0) & (xj == 0) & (y == 1)),
+        "01|y=1": np.sum((xi == 0) & (xj == 1) & (y == 1)),
+        "10|y=1": np.sum((xi == 1) & (xj == 0) & (y == 1)),
+        "11|y=1": np.sum((xi == 1) & (xj == 1) & (y == 1)),
+        "N_y1": np.sum(y == 1),
+
+        "N": total,
+        }
 
         mi_i = mutual_info_score(xi, y) / np.log(2)
         mi_j = mutual_info_score(xj, y) / np.log(2)
@@ -195,12 +216,12 @@ class PairwiseSynergyAnalyzer:
         # Correct the observed synergy by subtracting the mean of the permuted synergies
         corrected_synergy = observed_synergy - perm_synergies.mean()
 
-        return i, j, corrected_synergy, p_value
+        return i, j, corrected_synergy, p_value, counts
+
 
     def compute_synergy_matrix(
             self, 
             n_jobs=-1,
-            output_file: Optional[str] = None
         ) -> None:
         """
         Computes the pairwise synergy scores and permutation-based p-values for all feature pairs.
@@ -211,8 +232,15 @@ class PairwiseSynergyAnalyzer:
         Args:
             n_jobs (int, optional): (default: -1)
                 Number of parallel jobs to run. Set to -1 to use all available CPU cores.
-            output_file (Optional[str]): (default: None)
-                If provided, saves the result to Excel.
+        Returns:
+            pd.DataFrame:
+                DataFrame containing the synergy results
+                - Each row of the exported table contains:
+                    * Feature1 (str): first HPO term or feature name.
+                    * Feature2 (str): second HPO term or feature name.
+                    * Synergy (float): synergy score.
+                    * P-value (float): corresponding permutation-based p-value.
+                - Only the upper-triangular entries are included.
         """
         combinations_list = [    
             (i, j) for i in range(self.n_features) for j in range(i + 1, self.n_features)
@@ -223,9 +251,31 @@ class PairwiseSynergyAnalyzer:
             delayed(self.evaluate_pair_synergy)(i, j) for i, j in combinations_list
         )
         pvalue_matrix = np.full((self.n_features, self.n_features), np.nan)
-        for i, j, synergy, pval in results:
+
+        rows = []
+        for i, j, synergy, pval, counts in results:
             self.synergy_matrix[i, j] = self.synergy_matrix[j, i] = synergy
             pvalue_matrix[i, j] = pvalue_matrix[j, i] = pval
+            f1, f2 = self.hpo_terms[i], self.hpo_terms[j]
+            if j > i:  # only upper triangle
+                if not np.isnan(synergy):
+                    rows.append({
+                        "Feature1": f1,
+                        "Feature2": f2,
+                        "Synergy": synergy,
+                        "P_value": pval,
+                        "Count_00_y0": counts["00|y=0"],
+                        "Count_01_y0": counts["01|y=0"],
+                        "Count_10_y0": counts["10|y=0"],
+                        "Count_11_y0": counts["11|y=0"],
+                        "N_y0": counts["N_y0"],
+                        "Count_00_y1": counts["00|y=1"],
+                        "Count_01_y1": counts["01|y=1"],
+                        "Count_10_y1": counts["10|y=1"],
+                        "Count_11_y1": counts["11|y=1"],
+                        "N_y1": counts["N_y1"],
+                        "Total": counts["N"]
+                    })
 
         valid_mask = ~((np.isnan(self.synergy_matrix).all(axis=0)) | (np.nan_to_num(self.synergy_matrix, nan=0).sum(axis=0) == 0))
         valid_hpo_terms = self.hpo_terms[valid_mask]
@@ -243,26 +293,51 @@ class PairwiseSynergyAnalyzer:
             index=valid_hpo_terms,
             columns=valid_hpo_terms
         )
+        self.synergy_results = pd.DataFrame(rows)
+        return self.synergy_results
+    
 
-        if output_file is not None:
-            rows = []
-            for i, f1 in enumerate(self.synergy_matrix.index):
-                for j, f2 in enumerate(self.synergy_matrix.columns):
-                    if j > i:  # only upper triangle
-                        syn_val = self.synergy_matrix.iloc[i, j]
-                        pval_val = self.pvalue_matrix.iloc[i, j]
-                        if not np.isnan(syn_val):
-                            rows.append({
-                                "Feature1": f1,
-                                "Feature2": f2,
-                                "Synergy": syn_val,
-                                "P-value": pval_val
-                            })
-            df_long = pd.DataFrame(rows)
-            if output_file.endswith(".csv"):
-                df_long.to_csv(output_file, index=False)
-            else:
-                df_long.to_excel(output_file, index=False)
+    def save_synergy_results(
+            self, 
+            output_file: str
+        ) -> None:
+        """
+        Export synergy scores and p-values to a file (CSV or Excel).
+
+        The synergy results (`self.synergy_matrix` and `self.pvalue_matrix`) 
+        must be computed first by calling `compute_synergy_matrix`. 
+        Only the upper triangle of the symmetric matrices is exported to avoid duplication.
+
+        Args:
+            output_file (str):
+                Path to the output file. Supported formats:
+                - ".csv": saves as a CSV file.
+                - ".xlsx": saves as an Excel file.
+
+        Raises:
+            ValueError:
+                - If synergy results are not computed yet.
+                - If file extension is not supported.
+            OSError:
+                If the output path is invalid or not writable. 
+
+        Example:
+            >>> analyzer.compute_synergy_matrix()
+            >>> analyzer.save_synergy_results("synergy_results.csv")
+            >>> analyzer.save_synergy_results("synergy_results.xlsx")
+        """
+        if not hasattr(self, "synergy_results"):
+            raise ValueError("Synergy results not computed. Run compute_synergy_matrix() first.")
+
+        ext = os.path.splitext(output_file)[1].lower()
+        if ext not in [".csv", ".xlsx"]:
+            raise ValueError(f"Unsupported file format: {ext}. Use '.csv' or '.xlsx'.")
+
+        
+        if output_file.endswith(".csv"):
+            self.synergy_results.to_csv(output_file, index=False)
+        else:
+            self.synergy_results.to_excel(output_file, index=False)
    
     
     def filter_weak_synergy(
@@ -304,19 +379,30 @@ class PairwiseSynergyAnalyzer:
             self, 
             lower_bound: float = 0.1,
             target_name: str = "",
-            output_file=None
-        ) -> None:
+        ) -> go.Figure:
         """
-        Plot a heatmap of synergy scores with red boxes around significant pairs.
+        Generate a Plotly heatmap figure of pairwise synergy scores for HPO features.
+
+        This function computes a heatmap of synergy scores, annotates significant pairs,
+        and prepares hover text with correlation and p-values.
 
         Args:
-        lower_bound (float): (default: 0.1)
-            Minimum synergy value to keep in the heatmap.
-        target_name (str): (default: "")
-            Name of the target variable for the plot title.
-        output_file (str or None): 
-            If provided, saves the plot to an HTML file.
+            lower_bound (float, optional): Minimum synergy value to include in the heatmap.
+                                        Defaults to 0.1.
+            target_name (str, optional): Name of the target variable for the plot title.
+                                        Defaults to "".
+
+        Returns:
+            go.Figure: A Plotly heatmap figure object ready for display or saving.
+
+        Raises:
+            ValueError: If no sufficient synergy pairs exist after filtering.
+
+        Example:
+            >>> fig = analyzer.create_synergy_heatmap(lower_bound=0.2, target_name="Disease Status")
+            >>> fig.show()
         """
+
         synergy_matrix, pvalue_matrix = self.filter_weak_synergy(lower_bound=lower_bound)
 
         if synergy_matrix.empty or np.isnan(synergy_matrix.values).all():
@@ -341,19 +427,68 @@ class PairwiseSynergyAnalyzer:
         )
 
         # --- Generate custom hover text per cell ---
-        valid_mask = ~np.isnan(synergy_matrix.values)
         hover_text = np.empty_like(synergy_matrix, dtype=object)
-        hover_text[valid_mask] = [
-            f"<b>X</b>: {col}<br><b>Y</b>: {row}<br>"
-            f"<b>Corr</b>: {coef:.2f}<br><b>p-val</b>: {pval:.6f}"
-            for row, col, coef, pval in zip(
-                np.repeat(synergy_matrix.index, n_cols)[valid_mask.ravel()],
-                np.tile(synergy_matrix.columns, n_rows)[valid_mask.ravel()],
-                synergy_matrix.values[valid_mask],
-                pvalue_matrix.values[valid_mask]
-            )
-        ]
-        hover_text[~valid_mask] = ""
+        counts_lookup = {}
+        for row in self.synergy_results.itertuples():
+            # forward (original counts)
+            counts_lookup[(row.Feature1, row.Feature2)] = {
+            "Synergy": row.Synergy,
+            "P_value": row.P_value,  
+            "Count_00|y=0": row.Count_00_y0,
+            "Count_01|y=0": row.Count_01_y0,
+            "Count_10|y=0": row.Count_10_y0,
+            "Count_11|y=0": row.Count_11_y0,
+            "N_y0": row.N_y0,
+            "Count_00|y=1": row.Count_00_y1,
+            "Count_01|y=1": row.Count_01_y1,
+            "Count_10|y=1": row.Count_10_y1,
+            "Count_11|y=1": row.Count_11_y1,
+            "N_y1": row.N_y1,
+            "Total": row.Total
+            }
+        
+            # backward (swap 01 和 10)
+            counts_lookup[(row.Feature2, row.Feature1)] = {
+            "Synergy": row.Synergy,
+            "P_value": row.P_value, 
+            "Count_00|y=0": row.Count_00_y0,
+            "Count_01|y=0": row.Count_10_y0,  # swap 01 和 10
+            "Count_10|y=0": row.Count_01_y0,  # swap 01 和 10
+            "Count_11|y=0": row.Count_11_y0,
+            "N_y0": row.N_y0,
+            "Count_00|y=1": row.Count_00_y1,
+            "Count_01|y=1": row.Count_10_y1,  # swap 01 和 10
+            "Count_10|y=1": row.Count_01_y1,  # swap 01 和 10
+            "Count_11|y=1": row.Count_11_y1,
+            "N_y1": row.N_y1,
+            "Total": row.Total
+            }
+        
+        hover_text = []
+        for i, row in enumerate(pvalue_matrix.index):
+            hover_row = []
+            for j, col in enumerate(pvalue_matrix.columns):
+                synergy = synergy_matrix.iloc[i, j]
+                pval = pvalue_matrix.iloc[i, j]
+                if np.isnan(synergy):
+                    hover_row.append("")
+                else:
+                    counts = counts_lookup.get((row, col), {})
+                    hover_row.append(
+                        f"<b>X</b>: {col}<br><b>Y</b>: {row}<br>"
+                        f"<b>Synergy</b>: {synergy:.2f}<br><b>p-val</b>: {pval:.6f}<br>"
+                        f"<b>Counts (y=0)</b>: 00={counts.get('Count_00|y=0', 0)}, "
+                        f"01={counts.get('Count_01|y=0', 0)}, "
+                        f"10={counts.get('Count_10|y=0', 0)}, "
+                        f"11={counts.get('Count_11|y=0', 0)} (N={counts.get('N_y0', 0)})<br>"
+                        f"<b>Counts (y=1)</b>: 00={counts.get('Count_00|y=1', 0)}, "
+                        f"01={counts.get('Count_01|y=1', 0)}, "
+                        f"10={counts.get('Count_10|y=1', 0)}, "
+                        f"11={counts.get('Count_11|y=1', 0)} (N={counts.get('N_y1', 0)})<br>"
+                        f"<b>Total</b>: {counts.get('Total', 0)}"
+                    )
+            hover_text.append(hover_row)
+       
      
         # --- Create heatmap figure ---
         fig = go.Figure(
@@ -404,9 +539,30 @@ class PairwiseSynergyAnalyzer:
             height=fig_size + left_margin,
             plot_bgcolor="rgba(240,240,240,0.1)"
         )
+        return fig
+    
+    def save_synergy_heatmap(
+            self, 
+            fig: go.Figure, 
+            output_file: str
+        ) -> None:
+        """
+        Save a pairwise synergy heatmap figure to an HTML file.
 
-        # --- Save or show plot ---
-        if output_file:
-            fig.write_html(output_file)
+        Args:
+            fig (plotly.graph_objects.Figure): 
+                The heatmap figure generated by `create_synergy_heatmap` or `plot_synergy_heatmap`.
+            output_file (str): 
+                Path to the HTML file where the figure should be saved. Must end with '.html'.
 
-        fig.show()
+        Raises:
+            ValueError:
+                If the output_file extension is not '.html'.
+
+        Example:
+            >>> fig = analyzer.create_synergy_heatmap(lower_bound=0.2, target_name="Disease Status")
+            >>> analyzer.save_synergy_heatmap(fig, "synergy_heatmap.html")
+        """
+        if not output_file.endswith(".html"):
+            raise ValueError("output_file must have a '.html' extension")
+        fig.write_html(output_file)

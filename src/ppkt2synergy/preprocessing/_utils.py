@@ -1,4 +1,4 @@
-from typing import List, Dict, Set, Union, IO, Optional, Tuple
+from typing import List, Dict, Set, Union, IO, Optional, Tuple, Sequence
 from ..io import load_hpo,CohortDataLoader
 import pandas as pd
 import numpy as np
@@ -138,7 +138,7 @@ class HPOHierarchyUtils:
                     conflict_mask = mask & (matrix[anc] == 0)
                     if conflict_mask.any():
                         conflict_indices = matrix.index[conflict_mask].tolist()
-                        print(f"[Conflict] Term {anc} is an ancestor of {term}, but in these samples {term}=1 and {anc}=0: {conflict_indices}")
+                        logger.warning(f"[Conflict] Term {anc} is an ancestor of {term}, but in these samples {term}=1 and {anc}=0: {conflict_indices}")
                     # Only assign where target is NaN
                     update_mask = mask & (matrix[anc].isna())
                     matrix.loc[update_mask, anc] = 1
@@ -152,12 +152,10 @@ class HPOHierarchyUtils:
                     conflict_mask = mask & (matrix[desc] == 1)
                     if conflict_mask.any():
                         conflict_indices = matrix.index[conflict_mask].tolist()
-                        print(f"[Conflict] Term {desc} is a descendant of {term}, but in these samples {term}=0 and {desc}=1: {conflict_indices}")
+                        logger.warning(f"[Conflict] Term {desc} is a descendant of {term}, but in these samples {term}=0 and {desc}=1: {conflict_indices}")
                     # Only assign where target is NaN
                     update_mask = mask & (matrix[desc].isna())
                     matrix.loc[update_mask, desc] = 0
-
-
         return matrix 
  
 
@@ -225,7 +223,7 @@ class HPOHierarchyUtils:
 
     def build_relationship_mask(
             self, 
-            terms: List[str]
+            terms: Union[pd.Index, Sequence[str]]
         ) -> pd.DataFrame:
         """
         Build a term × term mask matrix where each cell is set to NaN if the two terms
