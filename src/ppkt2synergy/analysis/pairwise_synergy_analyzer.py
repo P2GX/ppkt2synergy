@@ -475,7 +475,7 @@ class PairwiseSynergyAnalyzer:
                 else:
                     counts = counts_lookup.get((row, col), {})
                     hover_row.append(
-                        f"<b>X</b>: {col}<br><b>Y</b>: {row}<br>"
+                        f"<b>X1</b>: {col}<br><b>X2</b>: {row}<br>"
                         f"<b>Synergy</b>: {synergy:.2f}<br><b>p-val</b>: {pval:.6f}<br>"
                         f"<b>Counts (y=0)</b>: 00={counts.get('Count_00|y=0', 0)}, "
                         f"01={counts.get('Count_01|y=0', 0)}, "
