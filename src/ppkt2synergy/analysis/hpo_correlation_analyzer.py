@@ -467,7 +467,7 @@ class HPOStatisticsAnalyzer:
                 else:
                     counts = counts_lookup.get((row, col), {})
                     hover_row.append(
-                        f"<b>X</b>: {col}<br><b>Y</b>: {row}<br>"
+                        f"<b>X1</b>: {col}<br><b>X2</b>: {row}<br>"
                         f"<b>Corr</b>: {coef:.2f}<br><b>p-val</b>: {pval:.6f}<br>"
                         f"<b>Counts</b>: 00={counts.get('Count_00', 0)}, "
                         f"01={counts.get('Count_01', 0)}, "
