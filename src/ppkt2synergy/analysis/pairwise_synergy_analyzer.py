@@ -6,6 +6,8 @@ from typing import Tuple, Union, Optional
 import plotly.graph_objs as go
 import logging
 import os
+from scipy.sparse import coo_matrix, triu
+
 logger = logging.getLogger(__name__)
 
 class PairwiseSynergyAnalyzer:
@@ -165,10 +167,6 @@ class PairwiseSynergyAnalyzer:
         y = self.y[mask]
         total = len(xi)
 
-        
-        if len(y) < self.min_individuals_for_synergy_caculation: 
-            return i, j, np.nan, np.nan, {}
-
         if np.all(xi == xi[0]) or np.all(xj == xj[0]) or np.all(y == y[0]):
             return i, j, np.nan, np.nan, {}
         
@@ -224,31 +222,55 @@ class PairwiseSynergyAnalyzer:
             n_jobs=-1,
         ) -> None:
         """
-        Computes the pairwise synergy scores and permutation-based p-values for all feature pairs.
+        Compute the pairwise synergy scores and permutation-based p-values for all valid feature pairs.
 
-        Only feature pairs not masked by the synergy matrix (i.e., not NaN) will be evaluated.
-        Results are stored in symmetric matrices and converted to pandas DataFrames with feature names.
+        The synergy score is evaluated for each pair of HPO terms/features that:
+        - Have at least `self.min_individuals_for_synergy_caculation` valid samples.
+        - Are not masked out in the existing `self.synergy_matrix` (i.e., not NaN).
+
+        Results are stored in two symmetric matrices (`self.synergy_matrix`, `self.pvalue_matrix`)
+        and an exported long-format table (`self.synergy_results`).
 
         Args:
             n_jobs (int, optional): (default: -1)
-                Number of parallel jobs to run. Set to -1 to use all available CPU cores.
+                Number of parallel jobs to run. 
+                Set to -1 to use all available CPU cores.
+
         Returns:
             pd.DataFrame:
-                DataFrame containing the synergy results
-                - Each row of the exported table contains:
+                DataFrame with one row per valid feature pair.
+                Each row contains:
                     * Feature1 (str): first HPO term or feature name.
                     * Feature2 (str): second HPO term or feature name.
-                    * Synergy (float): synergy score.
-                    * P-value (float): corresponding permutation-based p-value.
-                - Only the upper-triangular entries are included.
+                    * Synergy (float): synergy score between the pair.
+                    * P_value (float): permutation-based p-value.
+                    * Count_00_y0 (int): count of samples with (0,0) under label y=0.
+                    * Count_01_y0 (int): count of samples with (0,1) under label y=0.
+                    * Count_10_y0 (int): count of samples with (1,0) under label y=0.
+                    * Count_11_y0 (int): count of samples with (1,1) under label y=0.
+                    * N_y0 (int): total number of valid samples under label y=0.
+                    * Count_00_y1 (int): count of samples with (0,0) under label y=1.
+                    * Count_01_y1 (int): count of samples with (0,1) under label y=1.
+                    * Count_10_y1 (int): count of samples with (1,0) under label y=1.
+                    * Count_11_y1 (int): count of samples with (1,1) under label y=1.
+                    * N_y1 (int): total number of valid samples under label y=1.
+                    * Total (int): total number of valid samples (N_y0 + N_y1).
         """
-        combinations_list = [    
-            (i, j) for i in range(self.n_features) for j in range(i + 1, self.n_features)
-            if not np.isnan(self.synergy_matrix[i, j])
-        ]
+        mask = ~np.isnan(self.X)  # True = non-NaN
+        # Compute valid counts for each pair
+        valid_counts = mask.T.astype(int) @ mask.astype(int)
+        valid_counts_sparse = triu(coo_matrix(valid_counts), k=1)
+        rows, cols, counts = valid_counts_sparse.row, valid_counts_sparse.col, valid_counts_sparse.data
+        # Filter pairs based on existing synergy_matrix and minimum counts
+        ontology_values = self.synergy_matrix[rows, cols]
+        ontology_candidate = ~np.isnan(ontology_values)
+        candidate_idx = np.where(ontology_candidate & (counts >= self.min_individuals_for_synergy_caculation))[0]
+        
+
+        rows_cand, cols_cand = rows[candidate_idx], cols[candidate_idx]
 
         results = Parallel(n_jobs=n_jobs)(
-            delayed(self.evaluate_pair_synergy)(i, j) for i, j in combinations_list
+            delayed(self.evaluate_pair_synergy)(i, j) for i, j in zip(rows_cand, cols_cand)
         )
         pvalue_matrix = np.full((self.n_features, self.n_features), np.nan)
 
@@ -471,6 +493,7 @@ class PairwiseSynergyAnalyzer:
                 synergy = synergy_matrix.iloc[i, j]
                 pval = pvalue_matrix.iloc[i, j]
                 if np.isnan(synergy):
+
                     hover_row.append("")
                 else:
                     counts = counts_lookup.get((row, col), {})

@@ -7,6 +7,9 @@ from .correlation_type import CorrelationType
 import plotly.graph_objs as go
 import logging
 from os import path
+from scipy.sparse import coo_matrix, triu
+
+
 logger = logging.getLogger(__name__)
 
 class HPOStatisticsAnalyzer:
@@ -182,9 +185,6 @@ class HPOStatisticsAnalyzer:
             count_01 = np.sum((col_A_values == 0) & (col_B_values == 1))
             count_00 = np.sum((col_A_values == 0) & (col_B_values == 0))
             total = len(col_A_values)
-                        
-            if len(col_A_values) < self.min_individuals_for_correlation_test:
-                return (col_A, col_B, np.nan, np.nan, {"00":0,"01":0,"10":0,"11":0,"N":0})
             
             if np.all(col_A_values == col_A_values[0]) or np.all(col_B_values == col_B_values[0]):
                 return (col_A, col_B, np.nan, np.nan, {"00":0,"01":0,"10":0,"11":0,"N":0})
@@ -208,36 +208,65 @@ class HPOStatisticsAnalyzer:
             n_jobs: int = -1,
         ) -> None:
         """
-        Compute pairwise correlation and p-value matrices.
+        Compute pairwise correlation coefficients and p-values between HPO terms.
+
+        This function first identifies valid feature pairs (columns) that have 
+        sufficient non-missing individuals using a sparse matrix pre-filtering 
+        approach, then computes correlation statistics in parallel.
 
         Args:
-            correlation_type (CorrelationType): (default: CorrelationType.SPEARMAN)
+            correlation_type (CorrelationType, optional):
                 Correlation metric to compute. One of:
                 - CorrelationType.SPEARMAN
                 - CorrelationType.KENDALL
                 - CorrelationType.PHI
-            n_jobs(int): (default: -1)
-                Number of parallel jobs to use (-1 uses all cores).
+                Default: CorrelationType.SPEARMAN.
+            n_jobs (int, optional):
+                Number of parallel jobs to use for pairwise correlation.
+                -1 uses all available CPU cores. Default: -1.
+
         Returns:
             pd.DataFrame:
-                DataFrame with correlation coefficients and p-values
-                - Each row of the exported table contains:
-                    * Feature1 (str): HPO term or feature name.
-                    * Feature2 (str): HPO term or feature name.
-                    * Coefficient (float): correlation coefficient.
-                    * P-value (float): corresponding p-value.
+                A DataFrame containing pairwise correlation results.
+                Each row corresponds to one valid pair of HPO terms and includes:
+                    - Feature1 (str): Name of the first HPO term.
+                    - Feature2 (str): Name of the second HPO term.
+                    - Coefficient (float): Correlation coefficient.
+                    - P_value (float): Corresponding p-value.
+                    - Count_00 (int): Number of individuals with (0,0).
+                    - Count_01 (int): Number of individuals with (0,1).
+                    - Count_10 (int): Number of individuals with (1,0).
+                    - Count_11 (int): Number of individuals with (1,1).
+                    - Total (int): Total number of valid individuals.
+
+        Side Effects:
+            - Stores the full correlation coefficient matrix in `self.coef_df`.
+            - Stores the full p-value matrix in `self.pval_df`.
+            - Stores the pairwise results table in `self.correlation_results`.
         """
         if not isinstance(correlation_type, CorrelationType):
             raise ValueError(f"stats_type must be a CorrelationType, got {type(correlation_type)}")
         
         columns = self.hpo_terms
         n_cols = len(columns)
+        X = self.hpo_matrix.to_numpy()
+        mask = ~np.isnan(X)  # True = non-NaN
+        # Compute valid counts for each pair
+        valid_counts = mask.T.astype(int) @ mask.astype(int)
+        valid_counts_sparse = triu(coo_matrix(valid_counts), k=1)
+        rows, cols, counts = valid_counts_sparse.row, valid_counts_sparse.col, valid_counts_sparse.data
 
-        def compute_pair(i, j):
-            if self.relationship_mask is not None:
-                if i < self.n_features and j < self.n_features:
-                    if pd.isna(self.relationship_mask[i, j]):
-                        return (i,j, np.nan, np.nan, {"00":0,"01":0,"10":0,"11":0,"N":0})
+        # Apply relationship mask if present
+        if self.relationship_mask is not None:
+            ontology_values = self.relationship_mask[rows, cols]
+            ontology_candidate = ~np.isnan(ontology_values)
+            candidate_idx = np.where(ontology_candidate & (counts >= self.min_individuals_for_correlation_test))[0]
+        else:
+            candidate_idx = np.where(counts >= self.min_individuals_for_correlation_test)[0]
+
+        rows_cand, cols_cand = rows[candidate_idx], cols[candidate_idx]
+
+        def compute_pair(i, j): 
             try:
                 return self._calculate_pairwise_correlation(i, j, correlation_type=correlation_type)
             except Exception:
@@ -245,9 +274,9 @@ class HPOStatisticsAnalyzer:
 
         results = Parallel(n_jobs=n_jobs)(
             delayed(compute_pair)(i, j)
-            for i in range(n_cols) for j in range(i + 1, n_cols)
+            for i, j in zip(rows_cand, cols_cand)
         )
-
+        
         matrix = np.full((n_cols, n_cols), np.nan)
         pvalue_matrix = np.full((n_cols, n_cols), np.nan)
 
@@ -258,7 +287,7 @@ class HPOStatisticsAnalyzer:
             matrix[j, i] = coef
             pvalue_matrix[i, j] = pval
             pvalue_matrix[j, i] = pval
-            f1, f2 = self.hpo_matrix.columns[i], self.hpo_matrix.columns[j]
+            f1, f2 = columns[i], columns[j]
             if j > i:  # only upper triangle
                 if not np.isnan(coef):
                     rows.append({
@@ -274,7 +303,7 @@ class HPOStatisticsAnalyzer:
                     }) 
    
         self.correlation_results = pd.DataFrame(rows)
-
+        
         valid_mask = ~(np.isnan(matrix).all(axis=0)) | (np.nan_to_num(matrix, nan=0).sum(axis=0) == 0)
         if len(valid_mask) == 0:
             logger.warning("Warning: No valid correlation between HPO terms. Correlation matrix will be empty.")
