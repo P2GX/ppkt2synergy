@@ -1,0 +1,57 @@
+---
+site_name: ppkt2synergy
+
+theme:
+  name: material
+  palette:
+    - media: '(prefers-color-scheme: light)'
+      scheme: default
+      primary: indigo
+      accent: white
+      toggle:
+        icon: material/lightbulb
+        name: Switch to light mode
+    - media: '(prefers-color-scheme: dark)'
+      scheme: slate
+      primary: blue
+      accent: white
+      toggle:
+        icon: material/lightbulb-outline
+        name: Switch to dark mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - toc.integrate
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.tabs.link
+    - content.code.annotation
+    - content.code.copy
+    - content.code.select
+  language: en
+
+plugins:
+  - search
+
+nav:
+  - Home: index.md
+  - Setup: setup.md
+  - Tutorial: tutorial.md
+  - Internal: internal.md
+
+site_url: https://P2GX.github.io/ppkt2synergy/
+repo_url: https://github.com/P2GX/ppkt2synergy/
+
+markdown_extensions:
+  - admonition
+  - footnotes
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.mark
+  - attr_list
+  - md_in_html
+  - tables
+
+copyright: |
+  &copy; 2025 <a href="https://github.com/pnrobinson"  target="_blank" rel="noopener">Peter N Robinson, Jing Chen</a>
