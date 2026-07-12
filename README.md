@@ -53,7 +53,7 @@ results = analyzer.compute_correlation_matrix()
 results.result_table.head()
 ```
 
-For a complete workflow and advanced options, see the [Documentation](https://phenosign.readthedocs.io/en/latest/).
+For a complete workflow and advanced options, see the [Documentation](https://phenosign.readthedocs.io/).
 
 
 
