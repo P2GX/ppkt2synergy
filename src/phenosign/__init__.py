@@ -3,7 +3,7 @@ from .core import has_disease, has_gene, has_sex, has_variant_effect, has_exon_a
 
 
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 
 
 __all__ = [

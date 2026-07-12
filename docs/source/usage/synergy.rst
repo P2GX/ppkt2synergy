@@ -189,9 +189,8 @@ Pass a condition to ``compute_synergy_matrix()``:
     synergy_results = synergy_analyzer.compute_synergy_matrix(
         condition=condition,
         n_jobs=-1,
-        min_perms = 500,
-        max_perms = 10000,
-        target_successes = 20,
+        n_perms = 5000,
+
     )
 
     synergy_results.results_table.head()
@@ -200,14 +199,8 @@ Pass a condition to ``compute_synergy_matrix()``:
 Adaptive parameters tuning guide
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-``min_perms`` (default: 500)
-  The mandatory baseline iterations executed for every single HPO pair before early-stopping evaluation. For small-cohort or rare disease cohorts, raising this to ``500`` is highly recommended to suppress initial sampling noise.
-
-``max_perms`` (default: 10000)
-  The maximum ceiling allowed for top-tier synergistic pairs. For low-sample cohorts typical in rare disease research, setting this between ``10000`` and ``50000`` is statistically sufficient.
-
-``target_successes`` (default: 20)
-  The exit threshold for early-stopping. Shuffling stops immediately if simulated metrics equal or exceed the observed synergy score this many times. Setting this to ``20`` balances high-fidelity filtering and speed.
+``n_perms`` (default: 5000)
+  The number of permutations used to estimate p-values. For small-cohort or rare disease cohorts, raising this to ``5000`` is highly recommended to suppress initial sampling noise.
 
 ``n_jobs`` (default: -1)
   Number of parallel workers. ``-1`` utilizes all available CPU cores.

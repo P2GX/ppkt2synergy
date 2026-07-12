@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
 
 from sklearn.metrics import mutual_info_score
@@ -69,7 +68,7 @@ class SynergyResult:
             df = self.synergy_results.copy()
             if synergy_threshold < 0.0:
                 raise ValueError("synergy_threshold must be non-negative.")
-            df = df[df["synergy"] >= synergy_threshold]
+            df = df[df["synergy"].abs() >= synergy_threshold]
 
             if not 0.0 <= adj_pval_threshold <= 1.0:
                 raise ValueError("adj_pval_threshold must be between 0.0 and 1.0.")
@@ -91,7 +90,7 @@ class SynergyResult:
 
         if synergy_threshold < 0.0:
             raise ValueError("synergy_threshold must be non-negative.")
-        mask = synergy_matrix < synergy_threshold
+        mask = synergy_matrix.abs() < synergy_threshold
         synergy_matrix[mask] = np.nan
         p_value[mask] = np.nan
         
@@ -288,31 +287,38 @@ class SynergyResult:
             z=nan_bg.values,
             x=synergy_matrix.columns,
             y=synergy_matrix.index,
-            colorscale=[[0, "#eef4fb"], [1, "#eef4fb"]],
+            colorscale = [
+                [0, "#f8fbfe"],
+                [1, "#f8fbfe"],
+            ],
             showscale=False,
             hoverinfo="skip",
             xgap=1,
             ygap=1,
         ))
-        colorscale = [  
-            [0.00, "#f3e5f5"],
-            [0.35, "#ce93d8"],
-            [0.70, "#8e24aa"],
-            [1.00, "#4a148c"],  
+        colorscale = [
+            [0.00, "#24476B"],   # deep navy (negative synergy)
+            [0.25, "#AFC3D9"],
+            [0.50, "#F7F5F1"],   # neutral
+            [0.75, "#C8A9CF"],
+            [1.00, "#5A2E7A"],   # deep purple (positive synergy)
         ]
+        values = display_matrix.to_numpy(dtype=float)
+        max_abs = np.nanmax(np.abs(values))
+        max_value = np.nanmax(values)
         fig.add_trace(go.Heatmap(
                 z=display_matrix.values,
                 x=synergy_matrix.columns,
                 y=synergy_matrix.index,
                 colorscale=colorscale,
+                zmin=-max_abs,
+                zmax=max_value,
                 zmid=0,
                 text=text_matrix,
                 texttemplate=f"<span style='font-size:{annot_fontsize}px'>%{{text}}</span>",
                 hovertext=hover_text,
                 hoverinfo="text",
                 colorbar=dict(title="Synergy", len=0.8, thickness=title_fontsize),
-                zmin=0,
-                zmax=np.nanmax(display_matrix.values),
                 xgap=1,
                 ygap=1,
                 )
@@ -435,9 +441,7 @@ class SynergyAnalyzer:
         self, 
         i:int,
         j:int,
-        min_perms: int = 500,
-        max_perms: int = 10000,
-        target_successes: int = 20,
+        n_perms: int = 5000,
         include_pmids: bool = True
     ) -> tuple[int, int, float, float, dict[str, Any]]: 
         """
@@ -450,6 +454,9 @@ class SynergyAnalyzer:
 
         j : int
             Index of the second feature.
+
+        n_perms : int, default=5000
+            Number of permutations used to estimate p-values.
 
         include_pmids : bool, default=True
             If ``True``, aggregate PMIDs from contributing individuals.
@@ -534,46 +541,32 @@ class SynergyAnalyzer:
         observed_synergy = mi_ij - (mi_i + mi_j)
         abs_observed = np.abs(observed_synergy)
 
-        n_perms_executed = 0
-        successes = 0
-        perm_synergies_list = []
+  
+        extreme_count = 0
         
-        batch_size = min_perms
-        
-        while n_perms_executed < max_perms:
-            current_batch = min(batch_size, max_perms - n_perms_executed)
+        for _ in range(n_perms):
+            y_perm = self.rng.permutation(y)
+
+            mi_i_p = mutual_info_score(xi, y_perm) / np.log(2)
+            mi_j_p = mutual_info_score(xj, y_perm) / np.log(2)
+            mi_ij_p = mutual_info_score(joint_index, y_perm) / np.log(2)
             
-            for _ in range(current_batch):
-                y_perm = self.rng.permutation(y)
-                mi_i_p = mutual_info_score(xi, y_perm) / np.log(2)
-                mi_j_p = mutual_info_score(xj, y_perm) / np.log(2)
-                mi_ij_p = mutual_info_score(joint_index, y_perm) / np.log(2)
+            sim_synergy = mi_ij_p - (mi_i_p + mi_j_p)
+            
+            if np.abs(sim_synergy) >= abs_observed:
+                extreme_count += 1
                 
-                sim_synergy = mi_ij_p - (mi_i_p + mi_j_p)
-                perm_synergies_list.append(sim_synergy)
-                
-                if np.abs(sim_synergy) >= abs_observed:
-                    successes += 1
-                    
-            n_perms_executed += current_batch
 
-            if n_perms_executed >= min_perms and successes >= target_successes:
-                break 
+        p_value = (extreme_count + 1) / (n_perms + 1)
 
-        p_value = (successes + 1) / (n_perms_executed + 1)
-        
-        corrected_synergy = observed_synergy - np.mean(perm_synergies_list)
-
-        return i, j, float(corrected_synergy), float(p_value), counts
+        return i, j, float(observed_synergy), float(p_value), counts
 
     def compute_synergy_matrix(
         self, 
         condition: pd.Series,
         n_jobs=-1,
         include_pmids: bool = True,
-        min_perms: int = 500,
-        max_perms: int = 10000,
-        target_successes: int = 20,
+        n_perms: int = 5000,
     ) -> pd.DataFrame:
         """
         Compute pairwise synergy scores for all valid HPO term pairs.
@@ -590,18 +583,12 @@ class SynergyAnalyzer:
             If ``True``, aggregate PMIDs from contributing individuals and
             include them in the result table.
 
-        min_perms : int, default=500
-            The minimum baseline number of permutations executed for every feature pair before 
-            evaluating early-stopping criteria. Higher values (e.g., 500) reduce sampling variance.
-
-        max_perms : int, default=10000
-            The maximum ceiling of permutations allowed for top-tier synergistic pairs. This cap 
-            defines the highest resolution of the empirical p-value (i.e., 1 / max_perms). Scale to 
-            1,000,000 for publication-grade strict multi-test corrections.
-
-        target_successes : int, default=2
-            The exit threshold for early-stopping. Permutations stop immediately if the count of 
-            shuffled synergy metrics greater than or equal to the observed synergy reaches this number.
+        n_perms : int, default=5000
+            Number of Monte Carlo target-label permutations performed for each
+            phenotype pair when exhaustive enumeration is not used. The resulting
+            empirical p-value has a minimum attainable value of
+            1 / (n_perms + 1). Larger values provide finer p-value resolution
+            and lower Monte Carlo uncertainty at greater computational cost.
 
         Returns
         -------
@@ -662,10 +649,7 @@ class SynergyAnalyzer:
 
         results = Parallel(n_jobs=n_jobs)(
             delayed(self.evaluate_pair_synergy)(
-                i, j, 
-                min_perms=min_perms, 
-                max_perms=max_perms, 
-                target_successes=target_successes,
+                i, j, n_perms=n_perms,
                 include_pmids=include_pmids) for i, j in tqdm(pairs, desc="Calculating pairwise synergy")
         )
         synergy_matrix = np.full((self.n_features, self.n_features), np.nan)
