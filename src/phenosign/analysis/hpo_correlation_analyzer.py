@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from os import path
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -360,21 +360,71 @@ class CorrelationResult:
         self.fig = fig
         return fig
     
-    def save_correlation_heatmap(self, output_file: str = "correlation_heatmap.html") -> None:
+    def save_correlation_heatmap(
+        self, 
+        output_file: str = "correlation_heatmap.html",
+        *,
+        width: int | None = None,
+        height: int | None = None,
+        scale: float = 2.0,
+        ) -> None:
         """
-        Save a correlation heatmap as an HTML file.
+        Save a correlation heatmap as an HTML or a static image.
 
         Parameters
         ----------
         output_file : str
-            Output HTML file path.
+            Output path. Supported extensions are ``.html``, ``.png``,
+            ``.svg``, ``.pdf``, and ``.jpg``.
+
+        width : int, optional
+            Export width in pixels for static image formats.
+
+        height : int, optional
+            Export height in pixels for static image formats.
+
+        scale : float, default=2.0
+            Resolution multiplier for raster images such as PNG.
+            This has no meaningful effect on vector formats such as SVG or PDF.
+
+        Raises
+        ------
+        RuntimeError
+            If no heatmap has been generated.
+
+        ValueError
+            If the output format is unsupported.
         """
         if self.fig is None:
             raise RuntimeError("No heatmap figure found. Please run `plot_correlation_heatmap_with_significance()` first.")
-        if not output_file.endswith(".html"):
-            raise ValueError("output_file must have a '.html' extension")
-        self.fig.write_html(output_file)
+        output_path = Path(output_file)
+        extension = output_path.suffix.lower()
 
+        supported_extensions = {
+            ".html",
+            ".png",
+            ".svg",
+            ".pdf",
+            ".jpg",
+        }
+
+        if extension not in supported_extensions:
+            raise ValueError(
+                "Unsupported output format. "
+                "Use one of: .html, .png, .svg, .pdf, .jpg"
+            )
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if extension == ".html":
+            self.fig.write_html(str(output_path))
+        else:
+            self.fig.write_image(
+                str(output_path),
+                width=width,
+                height=height,
+                scale=scale,
+            )
 
 class HPOCorrelationAnalyzer:
     """
