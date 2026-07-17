@@ -99,14 +99,25 @@ Visualization
         adj_pval_threshold=0.05,
     )
 
-    results.save_correlation_heatmap(
-        output_file="correlation_heatmap.html",
-    )
-
 ``corr_threshold`` sets the minimum correlation strength; ``adj_pval_threshold``
 controls statistical significance. Lower thresholds include more pairs;
 higher thresholds focus on stronger and more reliable associations.
 
+.. code-block:: python
+
+    results.save_correlation_heatmap(
+        output_file="correlation_heatmap.html",
+    )
+
+The output format is determined automatically from the file extension.
+
+- ``.html`` saves an interactive Plotly figure with zooming, panning,
+  and hover tooltips.
+- ``.svg``, ``.png``, ``.pdf``, and ``.jpg`` save static
+  publication-ready figures.
+
+For static image formats, the optional ``width``, ``height``, and
+``scale`` parameters can be used to control the output resolution.
 
 Next steps
 ----------

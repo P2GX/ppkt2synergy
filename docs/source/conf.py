@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.abspath('../../src'))
 project = 'phenosign'
 copyright = '2026, Jing Chen'
 author = 'Jing Chen'
-release = '0.1.3'
+release = '0.1.4'
 
 # -- General configuration ---------------------------------------------------
 
