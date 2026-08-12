@@ -1,5 +1,5 @@
 phenosign
-============
+=========
 
 **phenosign** is a Python library for analyzing correlations and synergy in
 `GA4GH Phenopacket <https://www.ga4gh.org/product/phenopackets/>`_ cohorts.
