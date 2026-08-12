@@ -1,0 +1,43 @@
+name: Deploy Documentation to GitHub Pages
+
+on:
+  push:
+    branches:
+      - [develop, main]  
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r docs/requirements.txt
+
+      - name: Build Documentation
+        run: |
+          # Navigate to docs directory and build HTML
+          cd docs
+          make html
+          # Create a .nojekyll file to prevent GitHub from ignoring files starting with underscores
+          touch _build/html/.nojekyll
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./docs/_build/html
+          # If your repo is username.github.io/repo-name/, keep standard settings.
+          # The action automatically handles pushing to the 'gh-pages' branch.
