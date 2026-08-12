@@ -3,3 +3,5 @@ sphinx-rtd-theme
 nbsphinx>=0.8.10
 ipython
 nbconvert
+numpy
+pandas
