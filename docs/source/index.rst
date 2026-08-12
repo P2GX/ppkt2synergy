@@ -61,7 +61,10 @@ This minimal example demonstrates the workflow:
 
 **load phenopackets → build dataset → compute correlations**
 
-
+.. image:: ../img/gnas-correlation.png
+   :width: 400px
+   :align: center
+   :alt: Example correlation plot
 
 .. toctree::
    :maxdepth: 1
