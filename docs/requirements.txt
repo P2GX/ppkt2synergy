@@ -6,3 +6,12 @@ nbconvert
 numpy
 pandas
 plotly
+scipy
+hpo-toolkit
+phenopackets
+scikit-learn
+kaleido
+gpsea
+joblib      
+tqdm
+statsmodels
