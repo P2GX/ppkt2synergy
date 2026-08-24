@@ -1,6 +1,12 @@
 # phenosign
 
-**phenosign** is a Python library for analyzing correlations and synergy in [GA4GH Phenopacket](https://www.ga4gh.org/product/phenopackets/) cohorts. 
+**phenosign** is a Python library for analyzing pairwise relationships between Human Phenotype Ontology (HPO) features in [GA4GH Phenopacket](https://www.ga4gh.org/product/phenopackets/) cohorts.
+
+It provides two complementary analyses:
+
+1. **Pairwise association analysis**, which measures associations between binary phenotype annotations using the phi coefficient and Fisher's exact test.
+2. **Target-specific synergy analysis**, which evaluates whether a pair of phenotype features provides joint information about a predefined target beyond the information provided by the individual features.
+
 ---
 
 ## Installation
@@ -10,25 +16,20 @@ pip install phenosign
 ```
 
 
-## Overview
-
-This package enables the identification of pairwise associations and higher-order interactions between phenotypic features, helping to uncover biologically meaningful patterns in rare disease data.
-
-
 ## Features
 
-* Correlation analysis of HPO features (Phi Coefficient)
-* Synergy analysis to detect non-additive interactions between phenotypic features with respect to a target variable (e.g., variant effects or disease)
-* Support for GA4GH phenopacket data
-* Structured dataset construction from phenotypic profiles
-* Visualization utilities (e.g., correlation heatmaps)
+* Construction of phenotype matrices from GA4GH Phenopackets, with separate representation of observed, excluded, and unreported HPO annotations
+* Ontology-aware propagation of phenotype annotations
+* Pairwise phenotype association analysis using the phi coefficient, Fisher's exact test, and Benjamini–Hochberg correction, with exclusion of ancestor–descendant HPO term pairs
+* Mutual-information-based phenotype-pair synergy analysis with permutation testing and Benjamini–Hochberg correction, supporting targets such as disease diagnosis, variant effect, and sex
+* Tabular results and interactive heatmaps, including contingency counts, effective sample sizes, adjusted p-values, and publication provenance where available
 
 
 ## Quickstart
 
 ```python
 from pathlib import Path
-import json
+from google.protobuf.json_format import Parse
 from phenosign import (
     PhenotypeDatasetBuilder,
     HPOCorrelationAnalyzer,
@@ -45,7 +46,7 @@ for file_path in phenopacket_dir.glob("*.json"):
         phenopackets.append(phenopacket)
 
 # Build dataset
-dataset = PhenotypeDatasetBuilder(phenopackets).build()
+dataset = PhenotypeDatasetBuilder(phenopackets).build(build_gpsea_cohort=False)
 
 # Run correlation analysis
 analyzer = HPOCorrelationAnalyzer(dataset)
@@ -53,7 +54,7 @@ results = analyzer.compute_correlation_matrix()
 results.result_table.head()
 ```
 
-For a complete workflow and advanced options, see the [Documentation](https://phenosign.readthedocs.io/).
+For complete workflows, synergy analysis, visualization options, and API details, see the [Documentation](https://phenosign.readthedocs.io/).
 
 
 
