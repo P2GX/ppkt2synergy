@@ -6,7 +6,7 @@
   <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>phenosign &mdash; phenosign 0.1.4 documentation</title>
+  <title>phenosign &mdash; phenosign 0.1.5 documentation</title>
       <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=9edc463e" />
       <link rel="stylesheet" type="text/css" href="_static/custom.css?v=c6c3d6f6" />
@@ -14,7 +14,7 @@
   
       <script src="_static/jquery.js?v=5d32c60e"></script>
       <script src="_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
-      <script src="_static/documentation_options.js?v=fd825880"></script>
+      <script src="_static/documentation_options.js?v=59fadc99"></script>
       <script src="_static/doctools.js?v=fd6eb6e6"></script>
       <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
       <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
@@ -117,11 +117,11 @@ genotype-phenotype associations, and combinatorial biomarkers.</p>
 <span class="p">)</span>
 
 <span class="c1"># Load phenopackets</span>
-<span class="n">phenopacket_dir</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s2">&quot;path/to/your/fbn1_phenopackets/&quot;</span><span class="p">)</span>
+<span class="n">phenopacket_dir</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s2">"path/to/your/fbn1_phenopackets/"</span><span class="p">)</span>
 
 <span class="n">phenopackets</span> <span class="o">=</span> <span class="p">[]</span>
-<span class="k">for</span> <span class="n">file_path</span> <span class="ow">in</span> <span class="n">phenopacket_dir</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="s2">&quot;*.json&quot;</span><span class="p">):</span>
-   <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">file_path</span><span class="p">,</span> <span class="s2">&quot;r&quot;</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s2">&quot;utf-8&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+<span class="k">for</span> <span class="n">file_path</span> <span class="ow">in</span> <span class="n">phenopacket_dir</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="s2">"*.json"</span><span class="p">):</span>
+   <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">file_path</span><span class="p">,</span> <span class="s2">"r"</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s2">"utf-8"</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
       <span class="n">data</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">f</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
       <span class="n">phenopacket</span><span class="p">:</span> <span class="n">Phenopacket</span> <span class="o">=</span> <span class="n">Parse</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">Phenopacket</span><span class="p">())</span>
       <span class="n">phenopackets</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">phenopacket</span><span class="p">)</span>

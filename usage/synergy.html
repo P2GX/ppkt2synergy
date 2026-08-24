@@ -6,7 +6,7 @@
   <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Synergy Analysis &mdash; phenosign 0.1.4 documentation</title>
+  <title>Synergy Analysis &mdash; phenosign 0.1.5 documentation</title>
       <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=9edc463e" />
       <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=c6c3d6f6" />
@@ -14,7 +14,7 @@
   
       <script src="../_static/jquery.js?v=5d32c60e"></script>
       <script src="../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
-      <script src="../_static/documentation_options.js?v=fd825880"></script>
+      <script src="../_static/documentation_options.js?v=59fadc99"></script>
       <script src="../_static/doctools.js?v=fd6eb6e6"></script>
       <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
       <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
@@ -184,7 +184,7 @@ as a plain Python function. A phenopacket-level predicate must accept a
     <span class="c1"># your custom logic here</span>
     <span class="k">return</span> <span class="kc">True</span>
 
-<span class="n">condition</span> <span class="o">=</span> <span class="n">dataset</span><span class="o">.</span><span class="n">get_condition</span><span class="p">(</span><span class="n">my_predicate</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;my_condition&quot;</span><span class="p">)</span>
+<span class="n">condition</span> <span class="o">=</span> <span class="n">dataset</span><span class="o">.</span><span class="n">get_condition</span><span class="p">(</span><span class="n">my_predicate</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">"my_condition"</span><span class="p">)</span>
 </pre></div>
 </div>
 <p>For variant-level predicates, the function receives a GPSEA <code class="docutils literal notranslate"><span class="pre">Patient</span></code> object
@@ -199,20 +199,20 @@ on the <code class="docutils literal notranslate"><span class="pre">Patient</spa
 
 <span class="c1"># By disease</span>
 <span class="n">condition</span> <span class="o">=</span> <span class="n">dataset</span><span class="o">.</span><span class="n">get_condition</span><span class="p">(</span>
-    <span class="n">has_disease</span><span class="p">(</span><span class="s2">&quot;OMIM:154700&quot;</span><span class="p">),</span>
-    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;disease:Marfan syndrome&quot;</span><span class="p">,</span>
+    <span class="n">has_disease</span><span class="p">(</span><span class="s2">"OMIM:154700"</span><span class="p">),</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">"disease:Marfan syndrome"</span><span class="p">,</span>
 <span class="p">)</span>
 
 <span class="c1"># By sex</span>
 <span class="n">condition</span> <span class="o">=</span> <span class="n">dataset</span><span class="o">.</span><span class="n">get_condition</span><span class="p">(</span>
-    <span class="n">has_sex</span><span class="p">(</span><span class="s2">&quot;female&quot;</span><span class="p">),</span>
-    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;sex:female&quot;</span><span class="p">,</span>
+    <span class="n">has_sex</span><span class="p">(</span><span class="s2">"female"</span><span class="p">),</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">"sex:female"</span><span class="p">,</span>
 <span class="p">)</span>
 
 <span class="c1"># By gene</span>
 <span class="n">condition</span> <span class="o">=</span> <span class="n">dataset</span><span class="o">.</span><span class="n">get_condition</span><span class="p">(</span>
-    <span class="n">has_gene</span><span class="p">(</span><span class="s2">&quot;FBN1&quot;</span><span class="p">),</span>
-    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;gene:FBN1&quot;</span><span class="p">,</span>
+    <span class="n">has_gene</span><span class="p">(</span><span class="s2">"FBN1"</span><span class="p">),</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">"gene:FBN1"</span><span class="p">,</span>
 <span class="p">)</span>
 </pre></div>
 </div>
@@ -234,10 +234,10 @@ Set <code class="docutils literal notranslate"><span class="pre">build_gpsea_coh
 
 <span class="n">condition</span> <span class="o">=</span> <span class="n">dataset</span><span class="o">.</span><span class="n">get_variant_condition</span><span class="p">(</span>
     <span class="n">has_variant_effect</span><span class="p">(</span>
-        <span class="n">transcript_id</span><span class="o">=</span><span class="s2">&quot;NM_000138.5&quot;</span><span class="p">,</span>
+        <span class="n">transcript_id</span><span class="o">=</span><span class="s2">"NM_000138.5"</span><span class="p">,</span>
         <span class="n">variant_effect</span><span class="o">=</span><span class="n">VariantEffect</span><span class="o">.</span><span class="n">MISSENSE_VARIANT</span><span class="p">,</span>
     <span class="p">),</span>
-    <span class="n">condition_name</span><span class="o">=</span><span class="s2">&quot;variant:missense_NM_000138.5&quot;</span><span class="p">,</span>
+    <span class="n">condition_name</span><span class="o">=</span><span class="s2">"variant:missense_NM_000138.5"</span><span class="p">,</span>
 <span class="p">)</span>
 </pre></div>
 </div>
@@ -246,11 +246,11 @@ Set <code class="docutils literal notranslate"><span class="pre">build_gpsea_coh
 
 <span class="n">condition</span> <span class="o">=</span> <span class="n">dataset</span><span class="o">.</span><span class="n">get_variant_condition</span><span class="p">(</span>
     <span class="n">has_exon_and_variant_effect</span><span class="p">(</span>
-        <span class="n">transcript_id</span><span class="o">=</span><span class="s2">&quot;NM_000138.5&quot;</span><span class="p">,</span>
+        <span class="n">transcript_id</span><span class="o">=</span><span class="s2">"NM_000138.5"</span><span class="p">,</span>
         <span class="n">exon</span><span class="o">=</span><span class="mi">25</span><span class="p">,</span>
         <span class="n">variant_effect</span><span class="o">=</span><span class="n">VariantEffect</span><span class="o">.</span><span class="n">MISSENSE_VARIANT</span><span class="p">,</span>
     <span class="p">),</span>
-    <span class="n">condition_name</span><span class="o">=</span><span class="s2">&quot;variant:missense_exon25_NM_000138.5&quot;</span><span class="p">,</span>
+    <span class="n">condition_name</span><span class="o">=</span><span class="s2">"variant:missense_exon25_NM_000138.5"</span><span class="p">,</span>
 <span class="p">)</span>
 </pre></div>
 </div>
@@ -292,7 +292,7 @@ are automatically skipped and will not appear in the results.</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">synergy_results</span><span class="o">.</span><span class="n">save_synergy_results</span><span class="p">(</span>
     <span class="n">synergy_threshold</span><span class="o">=</span><span class="mf">0.01</span><span class="p">,</span>
     <span class="n">adj_pval_threshold</span><span class="o">=</span><span class="mf">0.05</span><span class="p">,</span>
-    <span class="n">output_file</span><span class="o">=</span><span class="s2">&quot;synergy_results.csv&quot;</span><span class="p">,</span>
+    <span class="n">output_file</span><span class="o">=</span><span class="s2">"synergy_results.csv"</span><span class="p">,</span>
 <span class="p">)</span>
 </pre></div>
 </div>
@@ -302,7 +302,7 @@ are automatically skipped and will not appear in the results.</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">synergy_results</span><span class="o">.</span><span class="n">plot_synergy_heatmap</span><span class="p">(</span>
     <span class="n">synergy_threshold</span><span class="o">=</span><span class="mf">0.01</span><span class="p">,</span>
     <span class="n">adj_pval_threshold</span><span class="o">=</span><span class="mf">0.05</span><span class="p">,</span>
-    <span class="n">condition_name</span><span class="o">=</span><span class="s2">&quot;disease:Marfan syndrome&quot;</span><span class="p">,</span>
+    <span class="n">condition_name</span><span class="o">=</span><span class="s2">"disease:Marfan syndrome"</span><span class="p">,</span>
 <span class="p">)</span>
 </pre></div>
 </div>
@@ -314,7 +314,7 @@ heatmap. Lower thresholds retain more phenotype pairs, whereas higher
 thresholds emphasize the strongest and most statistically robust
 synergy- and redundancy-dominated interactions.</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">synergy_results</span><span class="o">.</span><span class="n">save_synergy_heatmap</span><span class="p">(</span>
-<span class="n">output_file</span><span class="o">=</span><span class="s2">&quot;synergy_heatmap.html&quot;</span>
+<span class="n">output_file</span><span class="o">=</span><span class="s2">"synergy_heatmap.html"</span>
 <span class="p">)</span>
 </pre></div>
 </div>
