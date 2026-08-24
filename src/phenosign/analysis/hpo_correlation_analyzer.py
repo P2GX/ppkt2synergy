@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from os import path
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -360,21 +360,71 @@ class CorrelationResult:
         self.fig = fig
         return fig
     
-    def save_correlation_heatmap(self, output_file: str = "correlation_heatmap.html") -> None:
+    def save_correlation_heatmap(
+        self, 
+        output_file: str = "correlation_heatmap.html",
+        *,
+        width: int | None = None,
+        height: int | None = None,
+        scale: float = 2.0,
+        ) -> None:
         """
-        Save a correlation heatmap as an HTML file.
+        Save a correlation heatmap as an HTML or a static image.
 
         Parameters
         ----------
         output_file : str
-            Output HTML file path.
+            Output path. Supported extensions are ``.html``, ``.png``,
+            ``.svg``, ``.pdf``, and ``.jpg``.
+
+        width : int, optional
+            Export width in pixels for static image formats.
+
+        height : int, optional
+            Export height in pixels for static image formats.
+
+        scale : float, default=2.0
+            Resolution multiplier for raster images such as PNG.
+            This has no meaningful effect on vector formats such as SVG or PDF.
+
+        Raises
+        ------
+        RuntimeError
+            If no heatmap has been generated.
+
+        ValueError
+            If the output format is unsupported.
         """
         if self.fig is None:
             raise RuntimeError("No heatmap figure found. Please run `plot_correlation_heatmap_with_significance()` first.")
-        if not output_file.endswith(".html"):
-            raise ValueError("output_file must have a '.html' extension")
-        self.fig.write_html(output_file)
+        output_path = Path(output_file)
+        extension = output_path.suffix.lower()
 
+        supported_extensions = {
+            ".html",
+            ".png",
+            ".svg",
+            ".pdf",
+            ".jpg",
+        }
+
+        if extension not in supported_extensions:
+            raise ValueError(
+                "Unsupported output format. "
+                "Use one of: .html, .png, .svg, .pdf, .jpg"
+            )
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if extension == ".html":
+            self.fig.write_html(str(output_path))
+        else:
+            self.fig.write_image(
+                str(output_path),
+                width=width,
+                height=height,
+                scale=scale,
+            )
 
 class HPOCorrelationAnalyzer:
     """
@@ -513,7 +563,7 @@ class HPOCorrelationAnalyzer:
         self,  
         n_jobs: int = -1,
         include_pmids: bool = True
-    ) -> pd.DataFrame:
+    ) -> CorrelationResult:
         """
         Compute pairwise correlations between HPO terms.
 
@@ -543,15 +593,29 @@ class HPOCorrelationAnalyzer:
         has_zero = np.any(x == 0)
 
         if not has_one or not has_zero:
-            raise ValueError(
-                "HPO matrix lacks sufficient variation for correlation analysis.\n"
-                f"Detected values: "
-                f"{'1 present, ' if has_one else 'no 1, '}"
-                f"{'0 present' if has_zero else 'no 0'}.\n"
-                "At least one observed (1) and one excluded (0) value are required.\n"
-                "Please check your preprocessing (e.g., missing exclusion annotations)."
-            )
 
+            if not has_one and not has_zero:
+                reason = (
+                    "The HPO matrix contains no observed (1) "
+                    "or excluded (0) annotations."
+                )
+            elif not has_one:
+                reason = (
+                    "The HPO matrix contains no observed "
+                    "annotations (1)."
+                )
+            else:
+                reason = (
+                    "The HPO matrix contains no excluded "
+                    "annotations (0)."
+                )
+
+            raise ValueError(
+                "[Pairwise association: invalid HPO matrix]\n"
+                f"{reason}\n"
+                "At least one observed annotation and one excluded "
+                "annotation are required."
+            )
         mask = ~np.isnan(x)  
         valid_counts = mask.T.astype(int) @ mask.astype(int)
         valid_counts_sparse = triu(coo_matrix(valid_counts), k=1)
@@ -564,24 +628,19 @@ class HPOCorrelationAnalyzer:
         ontology_values = self.relationship_mask[rows, cols]
         ontology_candidate = ~np.isnan(ontology_values)
 
-        n_pairs_after_ontology = np.sum(ontology_candidate)
+        n_pairs_after_filter = np.sum(ontology_candidate)
 
         candidate_idx = np.where(ontology_candidate & (counts >= self.min_individuals_for_correlation_test))[0]
-
         rows_cand, cols_cand = rows[candidate_idx], cols[candidate_idx]
         pairs = list(zip(rows_cand, cols_cand))
 
         if len(pairs) == 0:
             logger.warning(
-                "[Correlation Analysis Blocked]: No HPO term pairs passed the candidate pre-filtering selection.\n"
-                "--------------------------------------------------------------------------------------------------\n"
-                "DIAGNOSIS SUMMARY:\n"
-                f"  - Pairs remaining after HPO Hierarchy Masking (excluding ancestors/descendants): {n_pairs_after_ontology}\n"
-                f"  - Pairs dropped due to low sample size (min_individuals_for_correlation_test={self.min_individuals_for_correlation_test}): {n_pairs_after_ontology}\n"
-                "SUGGESTION:\n"
-                "  Try lowering `min_individuals_for_correlation_test` (e.g., to 10 or 5) when instantiating HPOCorrelationAnalyzer,\n"
-                "  or check the sample size and missing value distribution in your Phenopackets queue.\n"
-                "--------------------------------------------------------------------------------------------------"
+                "[Pairwise association: no eligible pairs]\n"
+                f"Pairs after ontology filtering: {n_pairs_after_filter}\n"
+                f"Pairs meeting effective N >= "
+                f"{self.min_individuals_for_correlation_test}: {len(pairs)}\n"
+                "No pairs were tested."
             )
             empty_df = pd.DataFrame(columns=["HPO_A", "HPO_B", "correlation", "p_value", "adj_p_value"])
             empty_matrix = pd.DataFrame(index=self.hpo_terms, columns=self.hpo_terms, dtype=float)
@@ -628,12 +687,16 @@ class HPOCorrelationAnalyzer:
 
         if not np.any(valid_mask):
             logger.warning(
-                "[Correlation Analysis Empty]: Pairwise calculations finished, but NO valid statistical correlations were found.\n"
-                "Possible reasons include:\n"
-                "  - All calculated correlation coefficients returned NaN due to zero variance (constant terms).\n"
-                "  - Perfect separation or overlapping annotations skewed the contingency tables.\n"
-                "The resulting CorrelationResult matrices will contain entirely NaN values."
+                "[Pairwise association: no valid results]\n"
+                f"Pairs evaluated: {len(pairs)}\n"
+                "Pairs producing a valid phi coefficient: 0\n"
+                "For every evaluated pair, at least one phenotype had "
+                "no variation within the effective sample, or the "
+                "calculation failed."
             )
+            empty_df = pd.DataFrame(columns=["HPO_A", "HPO_B", "correlation", "p_value", "adj_p_value"])
+            empty_matrix = pd.DataFrame(index=self.hpo_terms, columns=self.hpo_terms, dtype=float)
+            return CorrelationResult(empty_df, empty_matrix, empty_matrix, self.label_mapping)
 
         filtered_columns = self.hpo_terms[valid_mask]
 

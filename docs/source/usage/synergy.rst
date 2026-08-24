@@ -35,7 +35,7 @@ genes, sex distribution, and variant effects:
 
 .. code-block:: python
 
-    diseases_df, sex_df, genes_df, variant_effects_df = dataset.describe_conditions()
+    dataset.describe_conditions()
 
 ``variant_effects_df`` is ``None`` if no GPSEA cohort was built during dataset construction.
 
@@ -229,14 +229,29 @@ Visualization
         condition_name="disease:Marfan syndrome",
     )
 
+``synergy_threshold`` specifies the minimum absolute synergy value
+(``|synergy|``) required for a phenotype pair to be displayed.;
+``adj_pval_threshold`` controls statistical significance.
+Only phenotype pairs satisfying both criteria are included in the
+heatmap. Lower thresholds retain more phenotype pairs, whereas higher
+thresholds emphasize the strongest and most statistically robust
+synergy- and redundancy-dominated interactions.
+
+.. code-block:: python
+
     synergy_results.save_synergy_heatmap(
-        output_file="synergy_heatmap.html",
+    output_file="synergy_heatmap.html"
     )
 
-``synergy_threshold`` sets the minimum interaction strength;
-``adj_pval_threshold`` controls statistical significance.
-Lower thresholds include more pairs; higher thresholds focus on stronger
-and more reliable interactions.
+The output format is determined automatically from the file extension.
+
+- ``.html`` saves an interactive Plotly figure with zooming, panning,
+  and hover tooltips.
+- ``.svg``, ``.png``, ``.pdf``, and ``.jpg`` save static
+  publication-ready figures.
+
+For static image formats, the optional ``width``, ``height``, and
+``scale`` parameters can be used to control the output resolution.
 
 .. note::
 

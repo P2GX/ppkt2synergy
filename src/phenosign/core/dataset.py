@@ -40,22 +40,122 @@ class PhenotypeDataset:
         """HPO feature IDs (matrix columns)."""
         return self.hpo_data.feature_ids
     
-    def describe_conditions(self) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame | None]:
+    def describe_conditions(self) -> pd.DataFrame:
         """
-        Generate summary tables describing key cohort-level conditions.
+        Generate a unified cohort summary table.
 
-        This method provides an overview of diseases, sex distribution,
-        gene annotations, and variant effects (if a GPSEA cohort is available).
+        The table combines disease, sex, gene, and variant-effect summaries
+        into a long-format DataFrame.
+
+        Returns
+        -------
+        pd.DataFrame
+            A table with the following columns:
+
+            - category :
+                Type of cohort characteristic, such as ``Disease``, ``Sex``,
+                ``Gene``, or ``Variant effect``.
+
+            - item :
+                Specific value within the category.
+
+            - n_individuals :
+                Number and percentage of individuals represented by the item.
         """
-        diseases_df = self.list_diseases()
-        sex_df = self.describe_sex()
-        genes_df = self.list_genes()
-        variant_effects_df = None
+        tables: list[pd.DataFrame] = []
+
+        diseases_df = self.list_diseases().reset_index()
+
+        if not diseases_df.empty:
+            diseases_df["item"] = diseases_df.apply(
+                lambda row: (
+                    f"{row['label']} [{row['disease_id']}]"
+                    if row["label"] != "Unknown Label"
+                    else row["disease_id"]
+                ),
+                axis=1,
+            )
+            diseases_df["category"] = "Disease"
+
+            tables.append(
+                diseases_df[
+                    ["category", "item", "n_individuals"]
+                ]
+            )
+
+        sex_df = self.describe_sex().reset_index()
+
+        if not sex_df.empty:
+            sex_df = sex_df.rename(columns={"sex": "item"})
+            sex_df["category"] = "Sex"
+
+            tables.append(
+                sex_df[
+                    ["category", "item", "n_individuals"]
+                ]
+            )
+
+        genes_df = self.list_genes().reset_index()
+
+        if not genes_df.empty:
+            genes_df = genes_df.rename(columns={"gene_symbol": "item"})
+            genes_df["category"] = "Gene"
+
+            tables.append(
+                genes_df[
+                    ["category", "item", "n_individuals"]
+                ]
+            )
+
         if self.gpsea_cohort is not None:
             variant_effects_df = self.variant_effect_summary()
+
+            if not variant_effects_df.empty:
+                variant_effects_df = (
+                    variant_effects_df
+                    .rename_axis(index="variant_effect")
+                    .reset_index()
+                    .melt(
+                        id_vars="variant_effect",
+                        var_name="transcript_id",
+                        value_name="n_individuals",
+                    )
+                )
+
+                variant_effects_df["item"] = (
+                    variant_effects_df["variant_effect"].astype(str)
+                    + " — "
+                    + variant_effects_df["transcript_id"].astype(str)
+                )
+                variant_effects_df["category"] = "Variant effect"
+
+                tables.append(
+                    variant_effects_df[
+                        ["category", "item", "n_individuals"]
+                    ]
+                )
+
+        if not tables:
+            return pd.DataFrame(
+                columns=["category", "item", "n_individuals"]
+            )
+
+        return pd.concat(
+            tables,
+            ignore_index=True,
+        )
+    
+        for patient in self.gpsea_cohort.all_patients:
+            for variant in patient.variants:
+                for txa in variant.tx_annotations:
+                    print(type(txa))
+                    print([
+                        attr
+                        for attr in dir(txa)
+                        if not attr.startswith("_")
+                    ])
+                    raise RuntimeError("Stop after first transcript annotation")
         
-        return diseases_df, sex_df, genes_df, variant_effects_df
-  
     def get_condition(
         self,
         predicate: Callable[[ppkt.Phenopacket], bool | None],
@@ -510,9 +610,9 @@ class PhenotypeDataset:
         for patient in self.gpsea_cohort.all_patients:
             for variant in patient.variants:
                 for txa in variant.tx_annotations:
-                    if getattr(txa, "transcript_id", False):
+                    if getattr(txa, "is_preferred", False) and getattr(txa, "transcript_id", None):
                         preferred_tx_ids.add(txa.transcript_id)
-
+        
         counters = {tx_id: counters[tx_id] for tx_id in preferred_tx_ids if tx_id in counters}
 
         raw_df = (

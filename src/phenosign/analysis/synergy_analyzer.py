@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from pathlib import Path
 
 from sklearn.metrics import mutual_info_score
 from joblib import Parallel, delayed
@@ -296,24 +297,84 @@ class SynergyResult:
             xgap=1,
             ygap=1,
         ))
-        colorscale = [
-            [0.00, "#24476B"],   # deep navy (negative synergy)
-            [0.25, "#AFC3D9"],
-            [0.50, "#F7F5F1"],   # neutral
-            [0.75, "#C8A9CF"],
-            [1.00, "#5A2E7A"],   # deep purple (positive synergy)
-        ]
         values = display_matrix.to_numpy(dtype=float)
-        max_abs = np.nanmax(np.abs(values))
-        max_value = np.nanmax(values)
+        finite_values = values[np.isfinite(values)]
+
+        neutral_color = "#F7F5F1"
+
+        if finite_values.size == 0:
+            # All values are missing
+            min_value = -1.0
+            max_value = 1.0
+
+            colorscale = [
+                [0.0, "#24476B"],
+                [0.5, neutral_color],
+                [1.0, "#5A2E7A"],
+            ]
+
+        else:
+            min_value = float(np.min(finite_values))
+            max_value = float(np.max(finite_values))
+
+            if min_value < 0 < max_value:
+
+                zero_position = (
+                    -min_value
+                    / (max_value - min_value)
+                )
+
+                colorscale = [
+                    [0.0, "#24476B"],
+                    [zero_position / 2, "#AFC3D9"],
+                    [zero_position, neutral_color],
+                    [
+                        zero_position
+                        + (1 - zero_position) / 2,
+                        "#C8A9CF",
+                    ],
+                    [1.0, "#5A2E7A"],
+                ]
+
+            elif min_value >= 0 and max_value > 0:
+
+                # Include zero in the displayed range
+                min_value = 0.0
+
+                colorscale = [
+                    [0.0, neutral_color],
+                    [0.5, "#C8A9CF"],
+                    [1.0, "#5A2E7A"],
+                ]
+
+            elif max_value <= 0 and min_value < 0:
+
+                # Include zero in the displayed range
+                max_value = 0.0
+
+                colorscale = [
+                    [0.0, "#24476B"],
+                    [0.5, "#AFC3D9"],
+                    [1.0, neutral_color],
+                ]
+
+            else:
+                # All finite values are exactly zero
+                min_value = -1.0
+                max_value = 1.0
+
+                colorscale = [
+                    [0.0, "#24476B"],
+                    [0.5, neutral_color],
+                    [1.0, "#5A2E7A"],
+                ]
         fig.add_trace(go.Heatmap(
                 z=display_matrix.values,
                 x=synergy_matrix.columns,
                 y=synergy_matrix.index,
                 colorscale=colorscale,
-                zmin=-max_abs,
+                zmin=min_value,
                 zmax=max_value,
-                zmid=0,
                 text=text_matrix,
                 texttemplate=f"<span style='font-size:{annot_fontsize}px'>%{{text}}</span>",
                 hovertext=hover_text,
@@ -359,21 +420,73 @@ class SynergyResult:
     
     def save_synergy_heatmap(
         self,
-        output_file: str = "synergy_heatmap.html"
+        output_file: str = "synergy_heatmap.html",
+        *,
+        width: int | None = None,
+        height: int | None = None,
+        scale: float = 2.0,
     ) -> None:
         """
-        Save a synergy heatmap as an HTML file.
+        Save the synergy heatmap as HTML or a static image.
 
         Parameters
         ----------
         output_file : str
-            Output HTML file path.
+            Output path. Supported extensions are ``.html``, ``.png``,
+            ``.svg``, ``.pdf``, and ``.jpg``.
+
+        width : int, optional
+            Export width in pixels for static image formats.
+
+        height : int, optional
+            Export height in pixels for static image formats.
+
+        scale : float, default=2.0
+            Resolution multiplier for raster images such as PNG.
+            This has no meaningful effect on vector formats such as SVG or PDF.
+
+        Raises
+        ------
+        RuntimeError
+            If no heatmap has been generated.
+
+        ValueError
+            If the output format is unsupported.
         """
         if self.fig is None:
-            raise RuntimeError("No heatmap figure found. Please run `plot_synergy_heatmap()` first.")
-        if not output_file.endswith(".html"):
-            raise ValueError("output_file must have a '.html' extension")
-        self.fig.write_html(output_file)
+            raise RuntimeError(
+                "No heatmap figure found. "
+                "Please run `plot_synergy_heatmap()` first."
+            )
+
+        output_path = Path(output_file)
+        extension = output_path.suffix.lower()
+
+        supported_extensions = {
+            ".html",
+            ".png",
+            ".svg",
+            ".pdf",
+            ".jpg",
+        }
+
+        if extension not in supported_extensions:
+            raise ValueError(
+                "Unsupported output format. "
+                "Use one of: .html, .png, .svg, .pdf, .jpg"
+            )
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if extension == ".html":
+            self.fig.write_html(str(output_path))
+        else:
+            self.fig.write_image(
+                str(output_path),
+                width=width,
+                height=height,
+                scale=scale,
+            )
 
 
 class SynergyAnalyzer:
@@ -567,7 +680,7 @@ class SynergyAnalyzer:
         n_jobs=-1,
         include_pmids: bool = True,
         n_perms: int = 5000,
-    ) -> pd.DataFrame:
+    ) -> SynergyResult:
         """
         Compute pairwise synergy scores for all valid HPO term pairs.
 
@@ -603,18 +716,46 @@ class SynergyAnalyzer:
         has_y_zero = np.any(self.y == 0)
 
         if not has_y_one or not has_y_zero:
+
+            if not has_y_one and not has_y_zero:
+                reason = (
+                    "The target contains no positive (1) or "
+                    "negative (0) values."
+                )
+            elif not has_y_one:
+                reason = "The target contains no positive values (1)."
+            else:
+                reason = "The target contains no negative values (0)."
+
             raise ValueError(
-                "Target condition lacks variation for synergy analysis.\n"
-                "At least one positive (1) and one negative (0) target value are required."
+                "[Phenotype-pair synergy: invalid target]\n"
+                f"{reason}\n"
+                "At least one value from each target group is required."
             )
 
         has_x_one = np.any(self.X == 1)
         has_x_zero = np.any(self.X == 0)
 
         if not has_x_one or not has_x_zero:
+
+            if not has_x_one and not has_x_zero:
+                reason = (
+                    "The HPO matrix contains no observed (1) or "
+                    "excluded (0) annotations."
+                )
+            elif not has_x_one:
+                reason = (
+                    "The HPO matrix contains no observed annotations (1)."
+                )
+            else:
+                reason = (
+                    "The HPO matrix contains no excluded annotations (0)."
+                )
+
             raise ValueError(
-                "HPO matrix lacks variation for synergy analysis.\n"
-                "At least one observed (1) and one excluded (0) feature value are required."
+                "[Phenotype-pair synergy: invalid HPO matrix]\n"
+                f"{reason}\n"
+                "At least one annotation of each type is required."
             )
 
         mask_X = ~np.isnan(self.X)  # X valid
@@ -628,7 +769,7 @@ class SynergyAnalyzer:
         ontology_values = self.relationship_mask[rows, cols]
         ontology_candidate = ~np.isnan(ontology_values)
 
-        n_pairs_after_ontology = np.sum(ontology_candidate)
+        n_pairs_after_filter = np.sum(ontology_candidate)
 
         candidate_idx = np.where(ontology_candidate & (counts >= self.min_individuals_for_synergy_calculation))[0]
         rows_cand, cols_cand = rows[candidate_idx], cols[candidate_idx]
@@ -636,16 +777,17 @@ class SynergyAnalyzer:
 
         if len(pairs) == 0:
             logger.warning(
-                "[Synergy Analysis Blocked]: No HPO pairs passed the candidate joint pre-filtering selection.\n"
-                "--------------------------------------------------------------------------------------------------\n"
-                "DIAGNOSIS SUMMARY:\n"
-                f"  - Pairs remaining after HPO Hierarchy Masking (excluding ancestors/descendants): {n_pairs_after_ontology}\n"
-                f"  - Pairs dropped due to low joint sample size (min_individuals_for_synergy_calculation={self.min_individuals_for_synergy_calculation}): {n_pairs_after_ontology - len(pairs)}\n"
-                "SUGGESTION :\n"
-                "  1. Try lowering `min_individuals_for_synergy_calculation` (e.g., to 15 or 10) in SynergyAnalyzer.\n"
-                "  2. Check if your target variable has too many missing (NaN) values, reducing valid patient overlap.\n"
-                "--------------------------------------------------------------------------------------------------"
+                "[Phenotype-pair synergy: no eligible pairs]\n"
+                f"Pairs after ontology filtering: "
+                f"{n_pairs_after_filter}\n"
+                f"Pairs meeting effective N >= "
+                f"{self.min_individuals_for_synergy_calculation}: "
+                f"{len(pairs)}\n"
+                "No pairs were evaluated."
             )
+            empty_df = pd.DataFrame(columns=["HPO_A", "HPO_B", "synergy", "p_value", "adj_p_value"])
+            empty_matrix = pd.DataFrame(index=self.hpo_terms, columns=self.hpo_terms, dtype=float)
+            return SynergyResult(empty_df, empty_matrix, empty_matrix, self.label_mapping, cond_name)
 
         results = Parallel(n_jobs=n_jobs)(
             delayed(self.evaluate_pair_synergy)(
@@ -687,19 +829,21 @@ class SynergyAnalyzer:
 
                     rows.append(row_data)
 
-        valid_mask = ~((np.isnan(synergy_matrix).all(axis=0)) | (np.nan_to_num(synergy_matrix, nan=0).sum(axis=0) == 0))
+        valid_mask = ~(np.isnan(synergy_matrix).all(axis=0)) 
         valid_hpo_terms = self.hpo_terms[valid_mask]
         if len(valid_hpo_terms) == 0:
             logger.warning(
-                "[Synergy Analysis Empty]: Computation finished, but NO valid statistical synergy was detected.\n"
-                "Possible reasons include:\n"
-                "  - HPO terms are perfectly collinear or redundant under the current target stratification.\n"
-                "  - Permutation background mean subtracted all observed information gain (corrected_synergy <= 0).\n"
-                "The resulting SynergyResult matrices will be populated with NaN values."
+                "[Phenotype-pair synergy: no valid results]\n"
+                f"Pairs evaluated: {len(pairs)}\n"
+                "Pairs producing a valid synergy score: 0\n"
+                "For every evaluated pair, at least one phenotype or "
+                "the target had no variation within the effective sample, "
+                "or the two phenotype profiles were identical."
             )
             empty_df = pd.DataFrame(columns=["HPO_A", "HPO_B", "synergy", "p_value", "adj_p_value"])
             empty_matrix = pd.DataFrame(index=self.hpo_terms, columns=self.hpo_terms, dtype=float)
             return SynergyResult(empty_df, empty_matrix, empty_matrix, self.label_mapping, cond_name)
+
 
         self.synergy_matrix = pd.DataFrame(
             synergy_matrix[np.ix_(valid_mask, valid_mask)],

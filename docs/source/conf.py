@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.abspath('../../src'))
 project = 'phenosign'
 copyright = '2026, Jing Chen'
 author = 'Jing Chen'
-release = '0.1.3'
+release = '0.1.5'
 
 # -- General configuration ---------------------------------------------------
 
@@ -38,3 +38,6 @@ autodoc_default_options = {
     "undoc-members": False,
     "private-members": False
 }
+
+def setup(app):
+    app.add_css_file('custom.css')
